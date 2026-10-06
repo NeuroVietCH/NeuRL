@@ -1,0 +1,1 @@
+"""Minimal active diagnostic agents."""

@@ -1,0 +1,33 @@
+einops>=0.8
+matplotlib>=3.8
+nibabel>=5.2
+numpy>=1.26
+PyYAML>=6.0
+scikit-learn>=1.4
+SimpleITK>=2.3
+torch>=2.4
+positional-encodings>=6.0
+
+# Optional but recommended for the official NeuroVFM package on CUDA systems.
+# The local adapter can import without it when inference stays on use_flash_attn=False.
+# flash-attn
+plotly>=5.20
+nbformat>=4.2.0
+pandas>=2.2
+
+# Runtime deps of the official NeuroVFM package (cloned into ext/neurovfm).
+omegaconf>=2.3
+pytorch-lightning>=2.5
+torchmetrics
+torchvision
+timm>=0.9
+huggingface_hub
+tqdm
+scipy
+pydantic>=2.8
+outlines
+
+# Notebooks
+jupyterlab
+ipykernel
+hd-bet>=2.0
