@@ -24,6 +24,10 @@ class TokenBatch:
     patch_size: tuple[int, int, int]
     remove_background: bool
     metadata: dict[str, Any]
+    # Per kept token: fraction of the patch inside the HD-BET brain mask (None if no mask was used),
+    # and whether NeuroVFM's own background rule kept it (False = added by the brain-mask rule).
+    brain_fraction: np.ndarray | None = None
+    neurovfm_foreground: np.ndarray | None = None
 
     @property
     def dense_grid_shape(self) -> tuple[int, int, int]:
@@ -325,45 +329,139 @@ class NeuroVFMEncoder:
             remove_background=bool(nf.get("remove_background", True)),
         )
 
-    def extract(self, scan_path: str | Path) -> TokenBatch:
+    def extract(
+        self,
+        scan_path: str | Path,
+        mask_path: str | Path | None = None,
+        min_brain_fraction: float | None | str = "config",
+    ) -> TokenBatch:
+        """Embed one MRI with NeuroVFM.
+
+        Tokens kept = NeuroVFM's own foreground patches (no voxel at/below its background
+        threshold) plus, when a brain mask is available, every patch whose brain fraction is
+        >= `min_brain_fraction`. The mask never changes pixel values; it only adds patches.
+        `mask_path` defaults to `<scan stem>_mask.nii.gz` next to the scan; `min_brain_fraction`
+        defaults to `neurovfm.min_brain_fraction` (None = NeuroVFM's rule only).
+        """
+        import warnings
+
         import torch
+        from neurovfm.data.io import load_image
+        from neurovfm.data.preprocess import prepare_for_inference, tokenize_volume
 
         nf = self.config["neurovfm"]
+        modality = nf.get("modality", "mri")
+        if str(modality).lower() != "mri":
+            raise ValueError("NeuroVFMEncoder.extract supports MRI only")
+        patch_size = tuple(int(v) for v in nf.get("patch_size", (4, 16, 16)))
+        if min_brain_fraction == "config":
+            min_brain_fraction = nf.get("min_brain_fraction")
         scan_path = resolve_path(scan_path, base=repo_root())
-        batch = self.preprocessor.load_study([scan_path], modality=nf.get("modality", "mri"))
+        mask_path = resolve_path(mask_path, base=repo_root()) if mask_path is not None else find_mask(scan_path)
+
+        # Same steps as StudyPreprocessor.load_study, but keep all patches so the mask rule can add some.
+        img = load_image(str(scan_path), preprocess=True)
+        if img is None:
+            raise ValueError(f"NeuroVFM could not load {scan_path}")
+        img_arrs, background_mask, _view = prepare_for_inference(img, mode=modality)
+        img_arr = img_arrs[0]
+        tokens, coords, filtered = tokenize_volume(img_arr, background_mask, patch_size=patch_size, remove_background=False)
+        foreground = ~filtered.astype(bool)  # filtered: 1 = background
+
+        keep = foreground.copy() if bool(nf.get("remove_background", True)) else np.ones_like(foreground)
+        brain_fraction = None
+        if mask_path is None:
+            warnings.warn(f"No brain mask for {scan_path.name}; using NeuroVFM's background rule only.", stacklevel=2)
+        else:
+            brain_fraction = patch_brain_fraction(mask_path, scan_path, patch_size)
+            if brain_fraction.shape[0] != tokens.shape[0]:
+                raise ValueError(f"mask grid {brain_fraction.shape[0]} tokens != image grid {tokens.shape[0]} for {scan_path}")
+            if min_brain_fraction is not None:
+                keep |= brain_fraction >= float(min_brain_fraction)
+
+        sel = torch.from_numpy(keep)
+        n = int(keep.sum())
+        batch = {
+            "img": torch.from_numpy(tokens).float()[sel],
+            "coords": torch.from_numpy(coords).long()[sel],
+            "series_masks_indices": torch.tensor([]),
+            "series_cu_seqlens": torch.tensor([0, n], dtype=torch.int32),
+            "series_max_len": n,
+            "study_cu_seqlens": torch.tensor([0, n], dtype=torch.int32),
+            "study_max_len": 1,
+            "mode": [modality],
+            "path": [str(scan_path)],
+            "size": [img_arr.shape],
+        }
         with torch.inference_mode():
             embeddings = self.encoder.embed(batch, use_amp=bool(nf.get("use_amp", True))).detach().float().cpu().numpy()
-        coords = batch["coords"].detach().cpu().numpy().astype(np.int64)
         metadata = {
             "paths": [str(p) for p in batch["path"]],
             "modes": [str(m) for m in batch["mode"]],
             "encoder": self.name,
-            # Needed to map token coords back to the scan; load_study does not expose it.
-            "geometry": neurovfm_geometry(scan_path, nf["repo"]),
+            # Needed to map token coords back to the scan.
+            "geometry": image_geometry(img),
+            "mask_path": str(mask_path) if mask_path is not None else None,
+            "min_brain_fraction": None if mask_path is None else min_brain_fraction,
+            "added_by_mask_rule": int((keep & ~foreground).sum()),
         }
         return TokenBatch(
             sample_id=sample_id_from_path(scan_path),
             scan_path=str(scan_path),
             embeddings=embeddings.astype(np.float32),
-            coords=coords,
+            coords=coords[keep].astype(np.int64),
             input_shape=tuple(int(v) for v in batch["img"].shape),
-            volume_size_dhw=tuple(int(v) for v in batch["size"][0]),
-            patch_size=tuple(int(v) for v in nf.get("patch_size", (4, 16, 16))),
+            volume_size_dhw=tuple(int(v) for v in img_arr.shape),
+            patch_size=patch_size,
             remove_background=bool(nf.get("remove_background", True)),
             metadata=metadata,
+            brain_fraction=None if brain_fraction is None else brain_fraction[keep].astype(np.float32),
+            neurovfm_foreground=foreground[keep],
         )
+
+
+def find_mask(scan_path: str | Path) -> Path | None:
+    """`<stem>_mask.nii.gz` next to the scan (written by neuro_evidence.preprocess), if present."""
+    p = Path(scan_path)
+    stem = p.name.replace(".nii.gz", "").replace(".nii", "")
+    mask = p.with_name(f"{stem}_mask.nii.gz")
+    return mask if mask.exists() else None
+
+
+def patch_brain_fraction(mask_path: str | Path, scan_path: str | Path, patch_size: tuple[int, int, int] = (4, 16, 16)) -> np.ndarray:
+    """Brain fraction of every NeuroVFM patch of `scan_path`, in tokenize_volume's (d h w) order.
+
+    The mask is resampled onto the scan's grid (physical space, nearest neighbour), then pushed
+    through NeuroVFM's own reorient/resample/crop and transpose so it lines up voxel for voxel.
+    It is cast to float first: NeuroVFM's B-spline resampling rings below 0, which wraps around
+    in an 8-bit mask.
+    """
+    import SimpleITK as sitk
+    from einops import rearrange
+    from neurovfm.data.io import load_image
+    from neurovfm.data.preprocess import transpose_to_dhw
+    from neurovfm.data.utils import preprocess_image
+
+    scan = load_image(str(scan_path), preprocess=False)
+    mask = sitk.Resample(sitk.ReadImage(str(mask_path)), scan, sitk.Transform(), sitk.sitkNearestNeighbor, 0.0, sitk.sitkFloat32)
+    mask = preprocess_image(mask)
+    spacing = mask.GetSpacing()
+    z_dim = 2 if len(set(spacing)) == 1 else int(np.argmax(spacing))  # same rule as prepare_for_inference
+    arr, _ = transpose_to_dhw(sitk.GetArrayFromImage(mask), z_dim)
+    p1, p2, p3 = patch_size
+    frac = rearrange((arr > 0.5).astype(np.float32), "(d a) (h b) (w c) -> (d h w) (a b c)", a=p1, b=p2, c=p3).mean(axis=1)
+    return frac.astype(np.float32)
 
 
 def save_token_batch(batch: TokenBatch, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = asdict(batch)
-    metadata.pop("embeddings")
-    metadata.pop("coords")
+    arrays = {k: metadata.pop(k) for k in ("embeddings", "coords", "brain_fraction", "neurovfm_foreground")}
+    arrays = {k: np.asarray(v) for k, v in arrays.items() if v is not None}
     np.savez_compressed(
         path,
-        embeddings=batch.embeddings.astype(np.float32),
-        coords=batch.coords.astype(np.int64),
+        **{**arrays, "embeddings": batch.embeddings.astype(np.float32), "coords": batch.coords.astype(np.int64)},
         metadata=json.dumps(metadata),
     )
     return path
@@ -372,4 +470,5 @@ def save_token_batch(batch: TokenBatch, path: str | Path) -> Path:
 def load_token_batch(path: str | Path) -> TokenBatch:
     data = np.load(path, allow_pickle=False)
     metadata = json.loads(str(data["metadata"]))
-    return TokenBatch(embeddings=data["embeddings"], coords=data["coords"], **metadata)
+    optional = {k: data[k] for k in ("brain_fraction", "neurovfm_foreground") if k in data.files}
+    return TokenBatch(embeddings=data["embeddings"], coords=data["coords"], **optional, **metadata)

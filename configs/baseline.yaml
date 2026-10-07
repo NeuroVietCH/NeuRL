@@ -1,5 +1,5 @@
 # NeuRL minimal atlas-free NeuroVFM feature extraction config
-sample_mri: data/processed/n4_hdbet_crop/ADNIDOD_0142929_MR_MT1__N3m_Br_20140918111051532_S230569_I444091.nii.gz  # ADNI-DOD DOD_1872 (CN), see data/adnidod/manifest_processed.csv
+sample_mri: data/processed/n4_crop_1mm/ADNIDOD_0142929_MR_MT1__N3m_Br_20140918111051532_S230569_I444091.nii.gz  # ADNI-DOD DOD_1872 (CN), see data/adnidod/manifest_processed.csv
 outputs_dir: outputs
 
 neurovfm:
@@ -11,14 +11,20 @@ neurovfm:
   target_spacing: [1.0, 1.0, 4.0]  # fixed by NeuroVFM (load_image hardcodes 1x1x4mm); other values raise
   remove_background: true
   use_amp: true
+  # Token selection on full-head input: keep NeuroVFM's own foreground patches (no dark voxel)
+  # PLUS every patch whose HD-BET brain fraction is >= this value. The mask is read from
+  # <scan stem>_mask.nii.gz next to the scan. null = NeuroVFM's rule only.
+  min_brain_fraction: 0.5
 
-# MRI cleanup before NeuroVFM (python -m neuro_evidence.preprocess, run from src/).
+# MRI preparation before NeuroVFM (python -m neuro_evidence.preprocess, run from src/).
+# Input: NIfTI or a DICOM series directory. Writes the full head (no skull strip), FOV-cropped
+# around the brain, plus a separate HD-BET brain mask.
 preprocess:
-  out_dir: data/processed/n4_hdbet_crop
+  out_dir: data/processed/n4_crop_1mm
   orientation: RAS
   spacing: [1.0, 1.0, 1.0]
   n4:
-    enabled: true
+    enabled: true    # needed for raw ADNI MPRAGE; harmless on top of ADNI's N3-corrected downloads
     shrink_factor: 4
     iterations: [50, 50, 30, 20]
     convergence_threshold: 1.0e-7
@@ -26,3 +32,7 @@ preprocess:
     method: hdbet   # hdbet | fallback (fallback = threshold mask, smoke tests only)
     device: cuda
     tta: false
+  crop:
+    enabled: true            # drop the air/neck below the head (otherwise hundreds of pure-noise tokens)
+    margin_mm: 25.0          # kept around the brain bbox: skull + scalp
+    inferior_margin_mm: 40.0 # below the brain (brainstem/cerebellum side)

@@ -1,12 +1,18 @@
-"""MRI cleanup before NeuroVFM: N4 bias correction -> RAS 1mm -> HD-BET skull strip -> brain crop.
+"""MRI preparation before NeuroVFM:
+NIfTI or DICOM series -> N4 bias correction -> RAS 1mm -> HD-BET brain mask -> crop FOV around the head.
 
-Ported from brainet's `preprocess_oasis_mri_for_fm.py` (shared `shared_n4_hdbet_crop` profile).
-NeuroVFM's own StudyPreprocessor then handles RPI reorientation, 1x1x4mm resampling,
-intensity normalization and tokenization.
+The image written for NeuroVFM is the FULL HEAD (not skull-stripped): NeuroVFM was trained on
+unstripped scans, and zeroing everything outside the brain shifts its intensity normalization and
+breaks its background filter. The field of view is cropped to the brain bounding box plus a margin
+(skull/scalp kept): ADNI FOVs reach far below the head, and that air/neck region passes NeuroVFM's
+10th-percentile background rule as hundreds of pure-noise tokens. The HD-BET mask is saved next to the image
+(`<stem>_mask.nii.gz`) and is only used to pick/label tokens (see encoder.py), never applied to pixels.
+NeuroVFM's own StudyPreprocessor then handles RPI reorientation, 1x1x4mm resampling, intensity
+normalization and tokenization.
 
-Usage:
-    python -m neuro_evidence.preprocess --manifest data/adnidod/manifest.csv
-    python -m neuro_evidence.preprocess scan1.nii scan2.nii.gz --out-dir data/processed
+Usage (from src/):
+    python -m neuro_evidence.preprocess --manifest ../data/adnidod/manifest.csv
+    python -m neuro_evidence.preprocess scan1.nii scan2.nii.gz path/to/dicom_series_dir --out-dir ../data/processed
 """
 
 from __future__ import annotations
@@ -25,16 +31,38 @@ import SimpleITK as sitk
 from .data import load_config, repo_root, resolve_path
 
 DEFAULTS: dict[str, Any] = {
-    "out_dir": "data/processed/n4_hdbet_crop",
+    "out_dir": "data/processed/fullhead_1mm",
     "orientation": "RAS",
     "spacing": [1.0, 1.0, 1.0],
     "n4": {"enabled": True, "shrink_factor": 4, "iterations": [50, 50, 30, 20], "convergence_threshold": 1.0e-7},
     "skull_strip": {"method": "hdbet", "device": "cuda", "tta": False},
+    # mm kept around the HD-BET brain bounding box; `inferior` is below the brain (brainstem/neck side).
+    "crop": {"enabled": True, "margin_mm": 25.0, "inferior_margin_mm": 40.0},
 }
 
 
+def merge_config(cfg: dict[str, Any] | None) -> dict[str, Any]:
+    """DEFAULTS overridden by `cfg`, one level deep (a partial `n4:` section keeps the other n4 keys)."""
+    out = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULTS.items()}
+    for k, v in (cfg or {}).items():
+        out[k] = {**out[k], **v} if isinstance(out.get(k), dict) and isinstance(v, dict) else v
+    return out
+
+
 def read_image(path: str | Path) -> sitk.Image:
-    image = sitk.ReadImage(str(path), sitk.sitkFloat32)
+    """NIfTI file, or a directory holding one DICOM series (the largest series if there are several)."""
+    path = Path(path)
+    if path.is_dir():
+        reader = sitk.ImageSeriesReader()
+        series = sitk.ImageSeriesReader.GetGDCMSeriesIDs(str(path))
+        if not series:
+            raise RuntimeError(f"No DICOM series in {path}")
+        files = max((reader.GetGDCMSeriesFileNames(str(path), sid) for sid in series), key=len)
+        reader.SetFileNames(files)
+        reader.SetOutputPixelType(sitk.sitkFloat32)
+        image = reader.Execute()
+    else:
+        image = sitk.ReadImage(str(path), sitk.sitkFloat32)
     if image.GetDimension() != 3:
         raise RuntimeError(f"Expected 3D image, got dimension={image.GetDimension()} from {path}")
     return image
@@ -99,15 +127,29 @@ def hdbet_mask(image: sitk.Image, cfg: dict[str, Any]) -> sitk.Image:
     return mask
 
 
-def crop_to_mask(image: sitk.Image, mask: sitk.Image) -> tuple[sitk.Image, sitk.Image]:
-    coords = np.argwhere(sitk.GetArrayFromImage(mask) > 0)
-    if coords.size == 0:
-        raise RuntimeError("Brain mask is empty.")
-    zyx_min, zyx_max = coords.min(axis=0), coords.max(axis=0) + 1
-    # SimpleITK index/size order is x, y, z.
-    start = [int(v) for v in zyx_min[::-1]]
-    size = [int(v) for v in (zyx_max - zyx_min)[::-1]]
-    return sitk.RegionOfInterest(image, size=size, index=start), sitk.RegionOfInterest(mask, size=size, index=start)
+def crop_to_brain(image: sitk.Image, mask: sitk.Image, margin_mm: float, inferior_margin_mm: float) -> tuple[sitk.Image, sitk.Image, list[int]]:
+    """Crop image and mask to the mask's bounding box + margins. Works for any axis orientation.
+
+    Returns the cropped pair and the crop box as [x0, y0, z0, x1, y1, z1] voxel indices of the input.
+    """
+    arr = sitk.GetArrayViewFromImage(mask)  # (z, y, x)
+    if not arr.any():
+        raise RuntimeError("Brain mask is empty; cannot crop")
+    nz = np.nonzero(arr)
+    lo = [int(nz[2].min()), int(nz[1].min()), int(nz[0].min())]
+    hi = [int(nz[2].max()) + 1, int(nz[1].max()) + 1, int(nz[0].max()) + 1]
+    direction = np.asarray(image.GetDirection()).reshape(3, 3)  # columns = index axes in LPS space
+    si_axis = int(np.argmax(np.abs(direction[2])))  # index axis closest to physical S
+    inferior_is_low = direction[2, si_axis] > 0  # index grows toward S -> inferior at low index
+    size, spacing = image.GetSize(), image.GetSpacing()
+    for i in range(3):
+        m_lo = m_hi = margin_mm
+        if i == si_axis:
+            m_lo, m_hi = (inferior_margin_mm, margin_mm) if inferior_is_low else (margin_mm, inferior_margin_mm)
+        lo[i] = max(0, lo[i] - int(round(m_lo / spacing[i])))
+        hi[i] = min(size[i], hi[i] + int(round(m_hi / spacing[i])))
+    box = (slice(lo[0], hi[0]), slice(lo[1], hi[1]), slice(lo[2], hi[2]))
+    return image[box], mask[box], lo + hi
 
 
 def output_stem(path: str | Path) -> str:
@@ -115,7 +157,7 @@ def output_stem(path: str | Path) -> str:
 
 
 def preprocess_scan(path: str | Path, out_dir: str | Path, cfg: dict[str, Any] | None = None, overwrite: bool = False) -> dict[str, Any]:
-    cfg = {**DEFAULTS, **(cfg or {})}
+    cfg = merge_config(cfg)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = output_stem(path)
@@ -134,8 +176,9 @@ def preprocess_scan(path: str | Path, out_dir: str | Path, cfg: dict[str, Any] |
         mask = fallback_mask(image)
     else:
         raise ValueError(f"Unknown skull_strip.method `{method}` (use hdbet or fallback)")
-    image = sitk.Mask(image, sitk.Cast(mask, sitk.sitkUInt8))
-    image, mask = crop_to_mask(image, mask)
+    crop_box = None
+    if cfg["crop"].get("enabled", True):
+        image, mask, crop_box = crop_to_brain(image, mask, float(cfg["crop"]["margin_mm"]), float(cfg["crop"]["inferior_margin_mm"]))
 
     sitk.WriteImage(image, str(image_out), True)
     sitk.WriteImage(mask, str(mask_out), True)
@@ -144,6 +187,8 @@ def preprocess_scan(path: str | Path, out_dir: str | Path, cfg: dict[str, Any] |
         "processed_path": str(image_out),
         "mask_path": str(mask_out),
         "skull_strip": method,
+        "n4": bool(cfg["n4"].get("enabled", True)),
+        "crop_box": crop_box,
         "shape_xyz": list(image.GetSize()),
         "brain_voxels": int(sitk.GetArrayViewFromImage(mask).sum()),
         "skipped": False,
@@ -152,7 +197,7 @@ def preprocess_scan(path: str | Path, out_dir: str | Path, cfg: dict[str, Any] |
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("scans", nargs="*", help="NIfTI files to preprocess")
+    parser.add_argument("scans", nargs="*", help="NIfTI files or DICOM series directories to preprocess")
     parser.add_argument("--manifest", help="CSV with an image_path column; writes <manifest>_processed.csv next to it")
     parser.add_argument("--config", default="configs/baseline.yaml", help="YAML with an optional `preprocess:` section")
     parser.add_argument("--out-dir", help="Overrides preprocess.out_dir")
@@ -160,7 +205,7 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
-    cfg = {**DEFAULTS, **load_config(args.config).get("preprocess", {})}
+    cfg = merge_config(load_config(args.config).get("preprocess", {}))
     if args.skull_strip:
         cfg["skull_strip"] = {**cfg["skull_strip"], "method": args.skull_strip}
     out_dir = resolve_path(args.out_dir or cfg["out_dir"], base=repo_root())
