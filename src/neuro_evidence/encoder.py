@@ -25,7 +25,7 @@ class TokenBatch:
     remove_background: bool
     metadata: dict[str, Any]
     # Per kept token: fraction of the patch inside the HD-BET brain mask (None if no mask was used),
-    # and whether NeuroVFM's own background rule kept it (False = added by the brain-mask rule).
+    # and whether NeuroVFM's released 10th-percentile background rule keeps it.
     brain_fraction: np.ndarray | None = None
     neurovfm_foreground: np.ndarray | None = None
 
@@ -337,11 +337,15 @@ class NeuroVFMEncoder:
     ) -> TokenBatch:
         """Embed one MRI with NeuroVFM.
 
-        Tokens kept = NeuroVFM's own foreground patches (no voxel at/below its background
-        threshold) plus, when a brain mask is available, every patch whose brain fraction is
-        >= `min_brain_fraction`. The mask never changes pixel values; it only adds patches.
+        Base tokens, by `neurovfm.token_rule`:
+          neurovfm (default) NeuroVFM's released rule, also used by its training code: no voxel
+                   at/below the volume's 10th percentile.
+          head     patches entirely inside our Otsu head mask `<scan stem>_head.nii.gz` (air-only,
+                   no skull stripping; cleaner than NeuroVFM's rule but not what it was trained with).
+        Plus, when an HD-BET brain mask is available, every patch whose brain fraction is
+        >= `min_brain_fraction`. Masks never change pixel values; they only select patches.
         `mask_path` defaults to `<scan stem>_mask.nii.gz` next to the scan; `min_brain_fraction`
-        defaults to `neurovfm.min_brain_fraction` (None = NeuroVFM's rule only).
+        defaults to `neurovfm.min_brain_fraction` (None = base rule only).
         """
         import warnings
 
@@ -358,8 +362,14 @@ class NeuroVFMEncoder:
             min_brain_fraction = nf.get("min_brain_fraction")
         scan_path = resolve_path(scan_path, base=repo_root())
         mask_path = resolve_path(mask_path, base=repo_root()) if mask_path is not None else find_mask(scan_path)
+        token_rule = str(nf.get("token_rule", "neurovfm")).lower()
+        if token_rule not in ("head", "neurovfm"):
+            raise ValueError(f"Unknown neurovfm.token_rule `{token_rule}` (use head or neurovfm)")
+        head_path = find_mask(scan_path, "head") if token_rule == "head" else None
+        if token_rule == "head" and head_path is None:
+            raise FileNotFoundError(f"No head mask next to {scan_path.name}; rerun neuro_evidence.preprocess or set neurovfm.token_rule=neurovfm")
 
-        # Same steps as StudyPreprocessor.load_study, but keep all patches so the mask rule can add some.
+        # Same steps as StudyPreprocessor.load_study, but keep all patches so the mask rules pick them.
         img = load_image(str(scan_path), preprocess=True)
         if img is None:
             raise ValueError(f"NeuroVFM could not load {scan_path}")
@@ -367,8 +377,15 @@ class NeuroVFMEncoder:
         img_arr = img_arrs[0]
         tokens, coords, filtered = tokenize_volume(img_arr, background_mask, patch_size=patch_size, remove_background=False)
         foreground = ~filtered.astype(bool)  # filtered: 1 = background
+        if head_path is not None:
+            head_fraction = patch_brain_fraction(head_path, scan_path, patch_size)
+            if head_fraction.shape[0] != tokens.shape[0]:
+                raise ValueError(f"head mask grid {head_fraction.shape[0]} tokens != image grid {tokens.shape[0]} for {scan_path}")
+            base = head_fraction >= 1.0  # like tokenize_volume: background if ANY voxel is background
+        else:
+            base = foreground
 
-        keep = foreground.copy() if bool(nf.get("remove_background", True)) else np.ones_like(foreground)
+        keep = base.copy() if bool(nf.get("remove_background", True)) else np.ones_like(base)
         brain_fraction = None
         if mask_path is None:
             warnings.warn(f"No brain mask for {scan_path.name}; using NeuroVFM's background rule only.", stacklevel=2)
@@ -401,9 +418,11 @@ class NeuroVFMEncoder:
             "encoder": self.name,
             # Needed to map token coords back to the scan.
             "geometry": image_geometry(img),
+            "token_rule": token_rule,
+            "head_mask_path": str(head_path) if head_path is not None else None,
             "mask_path": str(mask_path) if mask_path is not None else None,
             "min_brain_fraction": None if mask_path is None else min_brain_fraction,
-            "added_by_mask_rule": int((keep & ~foreground).sum()),
+            "added_by_mask_rule": int((keep & ~base).sum()),
         }
         return TokenBatch(
             sample_id=sample_id_from_path(scan_path),
@@ -420,16 +439,19 @@ class NeuroVFMEncoder:
         )
 
 
-def find_mask(scan_path: str | Path) -> Path | None:
-    """`<stem>_mask.nii.gz` next to the scan (written by neuro_evidence.preprocess), if present."""
+def find_mask(scan_path: str | Path, kind: str = "mask") -> Path | None:
+    """`<stem>_<kind>.nii.gz` next to the scan (written by neuro_evidence.preprocess), if present.
+
+    kind="mask": HD-BET brain mask; kind="head": Otsu head mask.
+    """
     p = Path(scan_path)
     stem = p.name.replace(".nii.gz", "").replace(".nii", "")
-    mask = p.with_name(f"{stem}_mask.nii.gz")
+    mask = p.with_name(f"{stem}_{kind}.nii.gz")
     return mask if mask.exists() else None
 
 
 def patch_brain_fraction(mask_path: str | Path, scan_path: str | Path, patch_size: tuple[int, int, int] = (4, 16, 16)) -> np.ndarray:
-    """Brain fraction of every NeuroVFM patch of `scan_path`, in tokenize_volume's (d h w) order.
+    """Mask (brain or head) fraction of every NeuroVFM patch of `scan_path`, in tokenize_volume's (d h w) order.
 
     The mask is resampled onto the scan's grid (physical space, nearest neighbour), then pushed
     through NeuroVFM's own reorient/resample/crop and transpose so it lines up voxel for voxel.

@@ -63,14 +63,16 @@ Start Jupyter with `.venv/bin/jupyter lab` and pick the "Python (NeuRL)" kernel.
 ```text
 data/adnidod/raw/*.nii                      # original N3 T1 scans
 data/adnidod/manifest.csv                   # clinical rows (DX, MMSE, AGE, ...) + image_path
-data/adnidod/manifest_processed.csv         # + processed_path, mask_path
-data/processed/n4_crop_1mm/*.nii.gz         # N4, RAS 1mm, FOV-cropped full-head scans (+ *_mask.nii.gz HD-BET masks)
-data/processed/fullhead_1mm/                # previous version: no N4, no crop
+data/adnidod/manifest_processed.csv         # + processed_path, mask_path, head_mask_path
+data/processed/strict/*.nii.gz              # scans as-is, NeuroVFM's own pipeline (+ *_head.nii.gz Otsu head masks)
+data/processed/n4_headcrop_1mm/             # previous version: N4, RAS 1mm, head crop
+data/processed/n4_crop_1mm/                 # older version: N4, RAS 1mm, HD-BET brain-box crop (+ *_mask.nii.gz)
+data/processed/fullhead_1mm/                # oldest version: RAS 1mm, no N4, no crop
 ```
 
 ## Preprocessing
 
-NeuroVFM was trained on full-head scans (only the air around the head is dropped), so the image it sees is **not** skull-stripped:
+Default is **strict**: NeuroVFM's own pipeline (Kondepudi et al., [arXiv 2511.18640](https://arxiv.org/abs/2511.18640)). NeuroVFM was trained on raw clinical scans with **no skull stripping** ("foreground masks remove air only"), no registration and no N4. Our preprocess only writes the scan unchanged as NIfTI (DICOM series are converted; pixel type and pose kept). NeuroVFM's `load_image`/`prepare_for_inference` then reorient to RPI, resample to 1x1x4 mm with 4 mm along the acquisition axis (sagittal for ADNI MPRAGE), clip to the 0.5-99.5th percentile, scale to [0,1] and cut 4x16x16 patches; `encoder.embed()` applies the training mean/std. Token caches from `data/processed/strict` are identical to feeding the raw files directly.
 
 ```bash
 cd src
@@ -78,15 +80,26 @@ cd src
 ../.venv/bin/python -m neuro_evidence.preprocess path/to/scan.nii.gz   # single scans also work
 ```
 
-Input is a NIfTI file or a DICOM series directory (ADNI downloads either). Steps (settings in the `preprocess:` section of `configs/baseline.yaml`): N4 bias correction -> RAS 1mm -> HD-BET brain mask (GPU) -> crop the field of view to the brain bounding box + 25 mm (40 mm below the brain). The full-head image and the mask are written as separate files to `data/processed/n4_crop_1mm/`; the mask is never applied to the pixels. HD-BET downloads its weights to `~/hd-bet_params` on first run. Use `--skull-strip fallback` for a quick smoke test without HD-BET. `python -m neuro_evidence.viz <scan> --out <png>` shows the exact volume NeuroVFM tokenizes, with the kept tokens overlaid.
+Optional steps, all off by default (`preprocess:` section of `configs/baseline.yaml`, applied in this order):
 
-Why crop: NeuroVFM's background rule (patch dropped if any voxel is below the volume's 10th percentile) lets noisy air through. On an uncropped ADNI-DOD scan with a large FOV, 254 of 803 kept tokens were pure air below the head; after the crop, 11. N4 alone does not change this. No registration is done: tokens stay in each scan's native pose.
+| Setting | Effect |
+|---|---|
+| `n4.enabled: true` | N4 bias correction (~no-op on ADNI's N3-corrected downloads) |
+| `orientation: RAS` | reorient before NeuroVFM |
+| `spacing: [1, 1, 1]` | resample; isotropic input makes NeuroVFM slice along I-S instead of the acquisition axis |
+| `skull_strip.method: hdbet` | HD-BET brain mask saved as `*_mask.nii.gz` (crop + `neurovfm.min_brain_fraction`); pixels are never stripped |
+| `crop.enabled: true` | crop the FOV to the brain mask (hdbet) or head mask (none) + `margin_mm` |
 
-Why not skull-strip: zeroing everything outside the brain shifts NeuroVFM's percentile intensity normalization (brain moves from ~0.3 to ~0.7, white matter saturates at 1.0) and breaks its background filter (empty patches kept, most cortex dropped).
+The previous pipeline (`n4_headcrop_1mm`) is `orientation: RAS`, `spacing: [1, 1, 1]`, `n4.enabled: true`, `crop.enabled: true`. Compared with strict on the 8 ADNI-DOD scans, its pooled embeddings have cosine 0.73-0.82 to the strict ones (0.82-0.85 over brain tokens), so the choice matters downstream. An Otsu head mask `*_head.nii.gz` is always written (for `neurovfm.token_rule: head`). Change `out_dir` when changing steps so versions do not mix. `python -m neuro_evidence.viz <scan> --out <png>` shows the exact volume NeuroVFM tokenizes, with the kept tokens overlaid.
+
+Why not skull-strip: NeuroVFM was trained on unstripped scans. Zeroing everything outside the brain shifts its percentile intensity normalization (brain moves from ~0.3 to ~0.7, white matter saturates at 1.0) and breaks its background filter (empty patches kept, most cortex dropped).
 
 ### Token selection
 
-`NeuroVFMEncoder.extract()` keeps NeuroVFM's own foreground patches (no voxel at/below its background threshold) **plus** every patch whose HD-BET brain fraction is at least `neurovfm.min_brain_fraction` (default 0.5). NeuroVFM's rule alone drops patches that contain a few dark voxels (sulcal CSF, bone), which removes much of the cortex and varies a lot between scans. On the 8 ADNI-DOD scans, brain coverage goes from 29-91% (mean 63%) to 89-97% (mean 92%); embeddings of NeuroVFM's own brain tokens stay close (mean cosine 0.94) when the extra patches join the context. Set `min_brain_fraction: null` for NeuroVFM's rule only. Without a mask file, `extract()` warns and falls back to NeuroVFM's rule.
+`neurovfm.token_rule` (in `NeuroVFMEncoder.extract()`):
+
+- `neurovfm` (default): NeuroVFM's released rule, patch dropped if any voxel is at/below the volume's 10th percentile. The released training code (`data/cache.py`, `datasets/dataset.py`, `pretrain.yaml`) uses the same rule, so this is what the model saw. ADNI's air is noisy (median ~120 vs a 10th percentile of ~81), so ~200 pure-air tokens per scan get through; the paper notes the same ("MRI foregrounds often include air due to lack of explicit skull stripping"). It also drops patches with a few dark voxels (sulcal CSF, bone): only 29-91% of the brain is kept.
+- `head`: keep patches entirely inside our Otsu head mask `<scan stem>_head.nii.gz`. The paper's Methods mention an Otsu mask without details; this implementation (Otsu on log intensity, largest component, holes filled) is ours. On the 8 ADNI-DOD scans it keeps 715-1193 tokens per scan, covers 100% of brain patches (HD-BET brain fraction >= 0.5) and no air; ~60% of tokens are skull/scalp/face/neck. With an HD-BET mask, `min_brain_fraction` still adds/labels brain patches (`null` by default).
 
 ## Run
 
