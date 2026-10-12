@@ -27,7 +27,6 @@ def run_episode(env: object, policy: torch.nn.Module | None = None, greedy: bool
         "prediction": env.trace.prediction,
         "visited_indices": env.trace.visited_indices,
         "inspected_indices": env.trace.inspected_indices,
-        "anomaly_scores": env.trace.anomaly_scores,
         "actions": env.trace.actions,
         "rewards": env.trace.rewards,
     }
