@@ -2,12 +2,12 @@
 
 Recomputes NeuroVFM's preprocessing (reorient, 1x1x4mm, intensity normalization) for a scan
 and overlays the cached token selection from `outputs/tokens/<sample_id>.npz`:
-  green  = brain token (brain_fraction >= threshold): what the agent loads
+  green  = brain token (brain_fraction >= threshold, or every kept token without an HD-BET mask): what the agent loads
   orange = context token: fed to NeuroVFM, dropped before the agent
   none   = patch dropped by the encoder
 
 Usage (from src/):
-    python -m neuro_evidence.viz ../data/processed/fullhead_1mm/<scan>.nii.gz --out ../outputs/figures/x.png
+    python -m neuro_evidence.viz ../data/processed/n4_headcrop_1mm/<scan>.nii.gz --out ../outputs/figures/x.png
 """
 
 from __future__ import annotations
@@ -34,10 +34,13 @@ def neurovfm_volume(scan_path: str | Path, neurovfm_repo: str | Path = "ext/neur
     return np.asarray(img_arrs[0], dtype=np.float32)
 
 
-def token_label_grid(batch, min_brain_fraction: float = 0.5) -> np.ndarray:
+def token_label_grid(batch, min_brain_fraction: float | None = None) -> np.ndarray:
     """Dense (d, h, w) patch grid: 0 = dropped, 1 = context token, 2 = brain token."""
     grid = np.zeros(batch.dense_grid_shape, dtype=np.uint8)
-    brain = batch.brain_fraction >= min_brain_fraction
+    if min_brain_fraction is None or batch.brain_fraction is None:
+        brain = np.ones(len(batch.coords), dtype=bool)
+    else:
+        brain = batch.brain_fraction >= min_brain_fraction
     d, h, w = batch.coords.T
     grid[d, h, w] = np.where(brain, 2, 1)
     return grid
@@ -109,7 +112,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("scan", help="full-head scan from neuro_evidence.preprocess")
     parser.add_argument("--tokens", help="token cache (default outputs/tokens/<sample_id>.npz)")
-    parser.add_argument("--min-brain-fraction", type=float, default=0.5)
+    parser.add_argument("--min-brain-fraction", type=float, default=None, help="needs an HD-BET token cache; default: all kept tokens")
     parser.add_argument("--config", default="configs/baseline.yaml")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()

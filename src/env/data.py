@@ -68,7 +68,7 @@ def load_npz_token_sample(
     token_path: str | Path,
     label: int,
     class_name: str,
-    min_brain_fraction: float | None = 0.5,
+    min_brain_fraction: float | None = None,
     sample_id: str | None = None,
     subject_id: str | None = None,
 ) -> dict[str, Any]:
@@ -103,7 +103,7 @@ def load_npz_token_sample(
 def load_adnidod_samples(
     manifest_csv: str | Path,
     token_dir: str | Path,
-    min_brain_fraction: float | None = 0.5,
+    min_brain_fraction: float | None = None,
     positive_classes: tuple[str, ...] = ("MCI", "AD", "Dementia"),
 ) -> list[dict[str, Any]]:
     """All ADNI-DOD scans in `manifest_processed.csv` that have a token cache in `token_dir`.
