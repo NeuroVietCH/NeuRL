@@ -190,7 +190,7 @@ def main() -> None:
                 best.update(value=metrics[select], update=update)
                 save_checkpoint(run_dir / "best.pt", policy, readers, update, cfg, metrics)
             save_checkpoint(run_dir / "last.pt", policy, readers, update, cfg, metrics)
-            log.info(f"  VAL auc {metrics['auc']:.3f} vs random {metrics['random_auc_matched']:.3f} (gain {metrics['auc_gain']:+.3f}) "
+            log.info(f"  VAL return {metrics['mean_return']:+.3f} vs random {metrics['random_return_matched']:+.3f} | auc {metrics['auc']:.3f} vs random {metrics['random_auc_matched']:.3f} (gain {metrics['auc_gain']:+.3f}) "
                      f"| bal acc {metrics['balanced_accuracy']:.3f} (CN {metrics['recall_cn']:.3f} / AD {metrics['recall_ad']:.3f}) "
                      f"| looks {metrics['mean_looks']:.1f}" + ("  * best" if is_best else f"  (best {select} {best['value']:.3f} @ {best['update']})"))
 
@@ -202,7 +202,7 @@ def main() -> None:
     test_metrics = {"best_update": ckpt["update"], **test_metrics}
     json.dump(test_metrics, open(run_dir / "test_metrics.json", "w"), indent=2)
     np.savez(run_dir / "test_traces.npz", sample_id=np.asarray(bank.sample_ids)[traces["scans"]], **traces)
-    log.info(f"TEST (best.pt @ update {ckpt['update']}): auc {test_metrics['auc']:.3f} vs random {test_metrics['random_auc_matched']:.3f} "
+    log.info(f"TEST (best.pt @ update {ckpt['update']}): return {test_metrics['mean_return']:+.3f} vs random {test_metrics['random_return_matched']:+.3f} | auc {test_metrics['auc']:.3f} vs random {test_metrics['random_auc_matched']:.3f} "
              f"(gain {test_metrics['auc_gain']:+.3f}) | bal acc {test_metrics['balanced_accuracy']:.3f} "
              f"(CN {test_metrics['recall_cn']:.3f} / AD {test_metrics['recall_ad']:.3f}) | looks {test_metrics['mean_looks']:.1f}")
     log.info(f"done in {(time.time() - t_start) / 60:.1f}m -> {run_dir}")

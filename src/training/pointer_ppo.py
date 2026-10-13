@@ -26,6 +26,7 @@ class PointerPPOConfig:
     value_coef: float = 0.5
     entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
+    target_kl: float | None = 0.02   # stop this update's epochs once mean approx KL exceeds 1.5x this
 
 
 @torch.no_grad()
@@ -89,6 +90,7 @@ def ppo_update(policy: nn.Module, optimizer: torch.optim.Optimizer, env: Pointer
     stats: dict[str, list[float]] = {"policy_loss": [], "value_loss": [], "entropy": [], "approx_kl": [], "clip_frac": []}
     policy.train()
     for _ in range(cfg.epochs):
+        epoch_kl = []
         perm = torch.randperm(len(b), device=b.device)
         for start in range(0, len(perm), cfg.minibatch_size):
             mb = perm[start:start + cfg.minibatch_size]
@@ -114,5 +116,8 @@ def ppo_update(policy: nn.Module, optimizer: torch.optim.Optimizer, env: Pointer
                 stats["value_loss"].append(float(value_loss))
                 stats["entropy"].append(float(entropy))
                 stats["approx_kl"].append(float((old_logp[mb] - logp).mean()))
+                epoch_kl.append(stats["approx_kl"][-1])
                 stats["clip_frac"].append(float(((ratio - 1).abs() > cfg.clip_ratio).float().mean()))
+        if cfg.target_kl is not None and np.mean(epoch_kl) > 1.5 * cfg.target_kl:
+            break
     return {k: float(np.mean(v)) for k, v in stats.items()}

@@ -153,6 +153,25 @@ Stage A (frozen readers), fold 0, budget 8, look cost 0.01, 1000 updates (2.9 mi
 
 Reading: the agent matches random looks while using ~40% fewer looks, but doesn't yet choose better tokens than random at the same count. That fits Q2: every token carries whole-scan context, so where it looks matters little.
 
+### Budget sweep (2026-10-13): `outputs/pointer_runs/stageA_fold0_b{2,4,8}_ret`
+
+Stage A, fold 0, readers reused from `stageA_fold0_b8`. best.pt chosen on val class-balanced mean return; PPO with target KL 0.02.
+
+| Budget | Test AUC agent | Test AUC random (matched looks) | Test return agent / random | Looks | Val return agent / random (end) |
+|---|---|---|---|---|---|
+| 2 | 0.822 | 0.857 | 0.118 / 0.188 | 2.0 | 0.365 / 0.335 |
+| 4 | 0.834 | 0.880 | 0.109 / 0.201 | 4.0 | 0.317 / 0.363 |
+| 8 | 0.842 | 0.861 | 0.087 / 0.099 | 7.7 | 0.282 / 0.270 |
+
+- **On test the agent is worse than random looks at every budget** (AUC −0.02 to −0.05). On val it's about even, and at budget 2 better. With 9 val AD and 24 test AD, both are noisy.
+- **The random baseline itself is noisy.** At budget 2 both random numbers use exactly 2 tokens per scan, yet they came out at 0.857 and 0.802 (3 draws each). Raised `random_draws` to 10.
+- **Likely cause: problem 1 in §4 (distribution shift).** The greedy agent picks similar, clustered tokens. The readers were trained only on random, spread-out sets. With context-mixed embeddings (Q2), a spread-out random sample gives the readers more independent views than a cluster.
+- **What should address it:**
+  - stage B (`--joint`), so the readers learn the agent's sets;
+  - all 5 folds, to average out the noise;
+  - a diversity term, or sampling instead of greedy at eval;
+  - local embeddings (Q2) as the long-term fix.
+
 ## Baselines the agent must beat (same look budget)
 
 - k random tokens → classifier `f`

@@ -48,6 +48,7 @@ ppo:
   value_coef: 0.5
   entropy_coef: 0.01
   max_grad_norm: 0.5
+  target_kl: 0.02          # early-stop an update's epochs when approx KL > 1.5x this (null = off)
 
 joint:                     # stage B; false = stage A (readers frozen after pretraining)
   enabled: false
@@ -60,6 +61,6 @@ joint:                     # stage B; false = stage A (readers frozen after pret
 training:
   val_fraction: 0.1        # subject-grouped hold-out from the fold's train split
   eval_every: 20           # PPO updates between validation evals
-  select_metric: auc       # val metric for best.pt (val has only ~9 AD scans: noisy)
-  random_draws: 3          # draws for the random-looks baseline at eval
+  select_metric: mean_return  # val metric for best.pt: class-balanced mean return (auc is too noisy with ~9 val AD)
+  random_draws: 10         # draws for the random-looks baseline at eval (3 draws varied by ~0.05 AUC on test)
   out_dir: outputs/pointer_runs
