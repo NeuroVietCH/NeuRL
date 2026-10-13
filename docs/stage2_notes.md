@@ -172,6 +172,31 @@ Stage A, fold 0, readers reused from `stageA_fold0_b8`. best.pt chosen on val cl
   - a diversity term, or sampling instead of greedy at eval;
   - local embeddings (Q2) as the long-term fix.
 
+### 5-fold sweep, stage A vs B, budgets 2 and 4 (2026-10-13): `outputs/pointer_runs/sweep_fold*`
+
+Each fold pretrains its own readers in `A_b2` and reuses them for the other three runs; stage B fine-tunes its own copy. Summary: `outputs/pointer_runs/summary_sweep_fold.csv` (`src/evaluation/summarize_pointer_runs.py`). Test split of each fold; random = same readers, same number of looks per scan, 10 draws.
+
+| Stage, budget | Test AUC agent | Random (matched) | AUC gain, mean (std) | Folds won | Return gain | Bal acc | Looks |
+|---|---|---|---|---|---|---|---|
+| A, 2 | 0.870 | 0.863 | +0.007 (0.022) | 3/5 | +0.014 | 0.792 | 2.0 |
+| A, 4 | 0.862 | 0.875 | −0.013 (0.016) | 1/5 | −0.019 | 0.775 | 3.9 |
+| **B, 2** | **0.882** | 0.866 | **+0.016 (0.007)** | **5/5** | +0.058 | 0.784 | 2.0 |
+| B, 4 | 0.839 | 0.844 | −0.004 (0.015) | 2/5 | −0.034 | 0.766 | 2.4 |
+
+- **Stage A** (frozen readers) gives no gain over random. That's consistent with the distribution-shift explanation.
+- **Stage B, budget 2** is the first consistent gain: +0.016 AUC, positive in all 5 folds (paired t ≈ 5, df 4). Small, but in every fold.
+  - Its random baseline (0.866) matches stage A's (0.863), so the joint readers did not get worse on random sets and the comparison is fair.
+  - The AUC gain does not show up in balanced accuracy (0.784 vs 0.792), which depends on the 0.5 threshold.
+- **Stage B, budget 4 is unstable:**
+  - fold 2 collapsed (AUC 0.758; its random baseline also fell to 0.773, so the readers degraded);
+  - 3 folds learned to stop after 1–1.5 looks;
+  - stage B random returns are much lower than stage A's (0.066 vs 0.166), so the joint readers became less calibrated;
+  - best checkpoints come from very early updates (20–220).
+- **Next:**
+  - stabilise joint training: lower reader lr, higher random fraction, fewer reader steps, reader early stopping on val;
+  - repeat B, budget 2 with more seeds;
+  - add a fixed-location baseline (the same learned tokens for every scan) to check whether the gain comes from adapting to each scan or just from a good fixed location.
+
 ## Baselines the agent must beat (same look budget)
 
 - k random tokens → classifier `f`
