@@ -1,0 +1,65 @@
+# Pointer agent: python src/training/train_pointer_agent.py --config configs/pointer_agent.yaml
+# Design and reasoning: docs/stage2_notes.md.
+# Sample data: cached OASIS-3 NeuroVFM tokens from N4 + HD-BET SKULL-STRIPPED volumes (stand-in until
+# the original images are available; see README "OASIS-3 sample data").
+data_root: /mnt/shared/datasets/NeuRL-dataset
+folds_csv: /mnt/shared/datasets/NeuRL-dataset/postprocessed/oasis_c3/split_info/folds.csv
+metadata_csv: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
+token_dir: /mnt/shared/datasets/NeuRL-dataset/oasis/processed/neurovfm_tokens
+fold: 0
+seed: 7
+device: cuda               # pick the GPU with CUDA_VISIBLE_DEVICES
+
+environment:
+  budget: 8                # max looks per episode (tokens inspected); the agent may STOP earlier
+  look_cost: 0.01          # per look, in nats of reader loss
+  loss_clamp: 0.01         # reader P(true label) clamped to [0.01, 0.99] in the reward
+
+reader:                    # K cross-fitted evidence classifiers
+  k: 5
+  d: 128
+  layers: 2
+  heads: 4
+  dropout: 0.1
+  lr: 0.0003
+  weight_decay: 0.05
+  batch_size: 256
+  max_set: 32              # pretraining subsets have size 0..max_set (>= every budget we sweep)
+  max_steps: 4000
+  eval_every: 200
+  patience: 5
+  eval_sizes: [1, 4, 8, 16, 32]
+  eval_draws: 4
+
+policy:
+  d: 128
+  layers: 2
+  heads: 4
+
+ppo:
+  updates: 1000
+  episodes_per_update: 128
+  epochs: 4
+  minibatch_size: 512
+  gamma: 1.0
+  gae_lambda: 0.95
+  clip_ratio: 0.2
+  lr: 0.0003
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+
+joint:                     # stage B; false = stage A (readers frozen after pretraining)
+  enabled: false
+  every: 10                # PPO updates between reader updates
+  steps: 50                # optimizer steps per reader per update
+  batch_size: 256
+  lr: 0.0001
+  random_fraction: 0.5     # share of each reader batch that is random subsets instead of the agent's picks
+
+training:
+  val_fraction: 0.1        # subject-grouped hold-out from the fold's train split
+  eval_every: 20           # PPO updates between validation evals
+  select_metric: auc       # val metric for best.pt (val has only ~9 AD scans: noisy)
+  random_draws: 3          # draws for the random-looks baseline at eval
+  out_dir: outputs/pointer_runs
