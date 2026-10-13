@@ -197,6 +197,29 @@ Each fold pretrains its own readers in `A_b2` and reuses them for the other thre
   - repeat B, budget 2 with more seeds;
   - add a fixed-location baseline (the same learned tokens for every scan) to check whether the gain comes from adapting to each scan or just from a good fixed location.
 
+### Sweep 2: guarded stage B, seeds, blind check (2026-10-13): `outputs/pointer_runs/sweep2_*`
+
+Changes:
+- Joint reader updates are gentler: lr 3e-5, 20 steps, 75% random sets.
+- A guard undoes a reader's update if its val balanced BCE on fixed random sets rises by more than 0.01.
+- New check, the **blind policy**: the same trained policy with the inspected embeddings zeroed and the reader belief fixed at 0.5. It can then only follow one fixed location sequence for every scan. Reported as `blind_auc` (`BlindPolicy` in `pointer_eval.py`).
+
+Results (summary: `outputs/pointer_runs/summary_sweep2_.csv`):
+
+| Runs | Test AUC agent | Random (matched) | Gain mean (std) | Wins | Blind | Agent − blind |
+|---|---|---|---|---|---|---|
+| A, budget 2, seed 7 (rerun) | 0.857 | 0.863 | −0.006 (0.020) | 1/5 | 0.862 | −0.005 |
+| B, budget 2, seeds 7/8/9 (15 runs) | 0.872 | 0.862 | +0.010 (0.025) | 11/15 | 0.873 | −0.002 (0.012) |
+| B, budget 4, seed 7 | 0.873 | 0.875 | −0.002 (0.024) | 2/5 | 0.880 | −0.007 |
+
+Findings:
+1. **The agent does not adapt to each scan.** The blind policy matches it in every configuration (agent − blind = −0.002 ± 0.012 over 15 runs). It has learned a fixed sequence of locations, not a search that reacts to what it sees. This fits Q2: each context-mixed token already summarises the whole scan, so seeing it doesn't change where it pays to look next.
+2. **Any gain is small and noisy.** Guarded B at budget 2 gives +0.010 ± 0.025 (11/15). Unguarded B in sweep 1 gave +0.016 ± 0.007 (5/5), but on one seed.
+   - The same stage A run (same fold, seed and readers) gave AUC 0.870 in sweep 1 and 0.857 in sweep 2. So the variance from one run to the next is about 0.01–0.03 per fold, as large as the gain.
+3. **The guard reverts ~97% of reader updates even at 0.01 tolerance,** so guarded B is close to frozen readers. Every joint update trades random-set accuracy for the agent's sets. The budget-4 collapse is gone (no fold below 0.857), but there's no gain either.
+
+Conclusion for the stand-in tokens: RL selection buys at most ~+0.01 AUC, and that comes from good fixed locations, not adaptive search. A direct search for the best fixed token positions would likely do as well without RL. Adaptive looking can only matter with embeddings that don't already contain the whole scan (Q2: local or early-layer embeddings).
+
 ## Baselines the agent must beat (same look budget)
 
 - k random tokens → classifier `f`
