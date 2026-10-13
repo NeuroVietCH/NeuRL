@@ -220,6 +220,36 @@ Findings:
 
 Conclusion for the stand-in tokens: RL selection buys at most ~+0.01 AUC, and that comes from good fixed locations, not adaptive search. A direct search for the best fixed token positions would likely do as well without RL. Adaptive looking can only matter with embeddings that don't already contain the whole scan (Q2: local or early-layer embeddings).
 
+### Sweep 2: guarded joint readers, blind check, 3 seeds (2026-10-13): `outputs/pointer_runs/sweep2_*`
+
+Changes since sweep 1:
+- joint reader updates are gentler (lr 3e-5, 20 steps, 75% random sets) and guarded: a reader's update is undone if its val balanced BCE on fixed random subsets rises by more than 0.01;
+- every test eval also runs the **blind policy**: the same policy with seen embeddings and belief hidden, so its picks are one fixed location sequence for every scan.
+
+Seed 7, 5 folds (seed 7 reuses sweep 1 readers):
+
+| Group | Test AUC | Random (matched) | Gain | Wins | Blind | Agent − blind |
+|---|---|---|---|---|---|---|
+| A, b2 (rerun) | 0.857 | 0.863 | −0.006 | 1/5 | 0.862 | −0.005 |
+| B guarded, b2 | 0.878 | 0.865 | +0.013 | 4/5 | 0.877 | +0.001 |
+| B guarded, b4 | 0.873 | 0.875 | −0.002 | 2/5 | 0.880 | −0.007 |
+
+B guarded, budget 2, seeds 7/8/9 × 5 folds (15 runs; seeds 8/9 pretrain their own readers):
+- test AUC 0.872 vs random 0.862: gain +0.010, positive in 11/15 runs;
+- fold-level t-test (seeds averaged per fold): AUC gain p = 0.19, return gain +0.033, p = 0.076.
+
+Findings:
+1. **The agent does not adapt to each scan.** The blind policy matches it: agent − blind is within ±0.01 in 13/15 runs, mean −0.002, p = 0.69. What it learns is a fixed sequence of locations, not a search that reacts to what it sees.
+2. **The fixed locations are at most slightly better than random:** about +0.01 AUC, not significant over 5 folds.
+3. **The guard stops the budget-4 reader collapse** (AUC 0.873 vs 0.839 unguarded), but it undoes 95–99% of reader updates. So guarded stage B is close to frozen readers.
+4. **Run-to-run PPO noise is about ±0.02 AUC per fold.** The same config and the same readers gave +0.007 and then −0.006 for stage A b2. Any single-run comparison below ~0.02 is noise.
+
+Conclusion: with these context-mixed, skull-stripped stand-in embeddings, active selection adds essentially nothing. One token already carries most of the scan's information (Q2), so where to look barely matters and nothing seen changes where to look next. More RL tuning on these tokens is unlikely to help. The blocker is the representation (Q2/Q3):
+- tokens whose content is local, so that location matters;
+- or a task where the evidence is local, e.g. focal lesions.
+
+A cheap check before the strict re-extraction: on the same tokens, measure how much the local-only part of the signal varies across regions. For example, train a reader on single tokens per region and compare AUC across regions. If all regions give about the same AUC, no selection policy can win.
+
 ## Baselines the agent must beat (same look budget)
 
 - k random tokens → classifier `f`
