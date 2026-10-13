@@ -103,8 +103,6 @@ class BrainPatchEnv:
             self.trace.prediction = pred
             reward += self.correct_reward if pred == self.label else self.incorrect_reward
             info["prediction"] = pred
-        else:
-            reward -= 0.1
 
         if self.step_count >= self.max_steps and not self.done:
             self.done = True

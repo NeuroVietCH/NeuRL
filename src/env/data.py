@@ -9,22 +9,45 @@ import pandas as pd
 from models.encoders import CachedTokenEncoder
 
 
-def _resolve(path: str | Path, base: str | Path) -> Path:
-    p = Path(path).expanduser()
-    return p if p.is_absolute() else Path(base) / p
-
-
 def token_name(patient_id: str, visit_id: str, exam_date: str) -> str:
     return f"{patient_id}__{visit_id}__{str(exam_date).replace('/', '-')}.pt"
 
 
-def build_token_manifest(folds_csv: str | Path, token_dir: str | Path, metadata_csv: str | Path, fold: int = 0, split: str | None = None) -> pd.DataFrame:
+def remap_data_path(path: str | Path, data_root: str | Path) -> Path:
+    """Map a brainet-style path (`/home/dev/brainet/data/oasis/...` or `data/oasis/...`) onto `data_root`.
+
+    The shared NeuRL dataset mirrors brainet's `data/` directory, so everything after the last
+    `data/` component is kept.
+    """
+    parts = Path(path).parts
+    if "data" not in parts:
+        return Path(path)
+    i = len(parts) - 1 - parts[::-1].index("data")
+    return Path(data_root).joinpath(*parts[i + 1 :])
+
+
+def build_token_manifest(
+    folds_csv: str | Path,
+    token_dir: str | Path,
+    metadata_csv: str | Path,
+    fold: int = 0,
+    split: str | None = None,
+    data_root: str | Path | None = None,
+) -> pd.DataFrame:
+    """Rows of the OASIS fold CSV that have a cached NeuroVFM token file.
+
+    With `data_root`, `volume_path`/`mask_path` are remapped from brainet paths onto it.
+    Note: these OASIS tokens were extracted from N4 + HD-BET skull-stripped + brain-cropped
+    volumes (`shared_n4_hdbet_crop`), not from the strict unstripped pipeline in `neuro_evidence`.
+    """
     folds_csv = Path(folds_csv)
-    base = folds_csv.parents[3] if len(folds_csv.parents) > 3 else Path.cwd()
     df = pd.read_csv(folds_csv)
     df = df[df["fold"] == fold].copy()
     if split is not None:
         df = df[df["split"] == split].copy()
+    if data_root is not None:
+        for col in ("volume_path", "mask_path"):
+            df[col] = df[col].map(lambda p: str(remap_data_path(p, data_root)))
 
     meta = pd.read_csv(metadata_csv)
     key = meta[["PTID", "VISCODE", "ID", "EXAMDATE"]].drop_duplicates()
@@ -50,7 +73,14 @@ def load_token_sample(row: pd.Series | dict[str, Any]) -> dict[str, Any]:
         "token_path": str(row["token_path"]),
         "volume_path": str(row["volume_path"]),
         "mask_path": str(row["mask_path"]) if "mask_path" in row and not pd.isna(row["mask_path"]) else None,
+        # OASIS sample tokens come from N4 + HD-BET skull-stripped input (see build_token_manifest).
+        "preprocessing": "n4_hdbet_skullstrip_crop",
     }
+
+
+def load_split_samples(manifest: pd.DataFrame) -> list[dict[str, Any]]:
+    """Every row of a (fold, split) manifest, e.g. the full train or test split."""
+    return [load_token_sample(row) for _, row in manifest.iterrows()]
 
 
 def load_balanced_samples(manifest: pd.DataFrame, n_per_class: int = 4, seed: int = 0) -> list[dict[str, Any]]:
@@ -98,30 +128,3 @@ def load_npz_token_sample(
         "volume_path": batch.scan_path,
         "mask_path": batch.metadata.get("mask_path"),
     }
-
-
-def load_adnidod_samples(
-    manifest_csv: str | Path,
-    token_dir: str | Path,
-    min_brain_fraction: float | None = None,
-    positive_classes: tuple[str, ...] = ("MCI", "AD", "Dementia"),
-) -> list[dict[str, Any]]:
-    """All ADNI-DOD scans in `manifest_processed.csv` that have a token cache in `token_dir`.
-
-    Label 0 = CN, 1 = any of `positive_classes` (ADNI-DOD here is CN vs MCI, while the agent's
-    actions are named CN/AD).
-    """
-    from neuro_evidence.encoder import sample_id_from_path
-
-    manifest_csv, token_dir = Path(manifest_csv), Path(token_dir)
-    root = Path(__file__).resolve().parents[2]
-    samples = []
-    for _, row in pd.read_csv(manifest_csv).iterrows():
-        dx = str(row["DX"])
-        if dx != "CN" and dx not in positive_classes:
-            continue
-        token_path = token_dir / f"{sample_id_from_path(_resolve(row['processed_path'], root))}.npz"
-        if not token_path.exists():
-            continue
-        samples.append(load_npz_token_sample(token_path, label=int(dx != "CN"), class_name=dx, min_brain_fraction=min_brain_fraction, sample_id=f"{row['PTID']}_{row['VISCODE']}", subject_id=str(row["PTID"])))
-    return samples

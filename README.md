@@ -54,7 +54,7 @@ Start Jupyter with `.venv/bin/jupyter lab` and pick the "Python (NeuRL)" kernel.
 - encoder checkpoint at `checkpoints/hf/mlinslab/neurovfm-encoder`
 - a full-head sample MRI at `sample_mri`, with its HD-BET mask next to it as `<stem>_mask.nii.gz` (currently an ADNI-DOD scan, see below)
 
-`configs/active_neuro_agent.yaml` expects cached OASIS folds/manifest/token files under `../brainet/data/...`; update those paths to wherever your OASIS data lives.
+`configs/active_neuro_agent.yaml` reads the OASIS-3 sample data from `/mnt/shared/datasets/NeuRL-dataset` (`data_root`, see below).
 
 ## Data
 
@@ -69,6 +69,32 @@ data/processed/n4_headcrop_1mm/             # previous version: N4, RAS 1mm, hea
 data/processed/n4_crop_1mm/                 # older version: N4, RAS 1mm, HD-BET brain-box crop (+ *_mask.nii.gz)
 data/processed/fullhead_1mm/                # oldest version: RAS 1mm, no N4, no crop
 ```
+
+### OASIS-3 sample data (agent development)
+
+The active agent (`notebooks/03_active_neuro_agent_baseline.ipynb`, `src/env`, `src/training`) currently trains on cached OASIS-3 NeuroVFM tokens from the shared dataset volume (2013 scans, 1338 subjects):
+
+```text
+/mnt/shared/datasets/NeuRL-dataset/
+  oasis/processed/neurovfm_tokens/*.pt                 # {embeddings [N,768] fp16, coords [N,3], token_count, embedding_dim, grid_shape}
+  oasis/processed_mri/shared_n4_hdbet_crop/            # volumes the tokens were extracted from (+ *_mask.nii.gz)
+  oasis/processed_mri/brainiac_canonical/              # 96^3 BrainIAC inputs (unused here)
+  oasis/processed_mri/oasis_*_manifest.csv             # clinical rows + preprocessing provenance
+  postprocessed/oasis_c3/split_info/folds.csv          # 5-fold, subject-grouped, CN vs AD (CDR 0.5 dropped)
+```
+
+**These tokens are from skull-stripped input** (N4 → HD-BET skull strip → brain crop, RAS 1 mm), not the strict unstripped pipeline above, so they differ from what NeuroVFM was trained on (see "Why not skull-strip"). Treat them as stand-in data for building and debugging the agent architecture and training loop only. Results on them are not comparable to strict tokens. The original OASIS images are not on the shared volume yet. Once they are, re-extract strict tokens with `neuro_evidence` and switch the config over.
+
+Train the agent (one fold; subject-grouped 10% validation carved from the fold's train split picks `best.pt`, which is scored once on the fold's test split at the end):
+
+```bash
+.venv/bin/python src/training/train_agent.py --config configs/train_agent.yaml [--fold 0] [--updates 500] [--name my_run]
+tail -f outputs/runs/<run>/train.log    # one line per PPO update, VAL line every training.eval_every updates
+```
+
+The run directory has `train_metrics.csv`, `val_metrics.csv`, `last.pt`, `best.pt`, `test_metrics.json` and the resolved `config.yaml`.
+
+`folds.csv` stores brainet paths (`/home/dev/brainet/data/...`, `data/...`). `build_token_manifest(..., data_root=...)` remaps them onto `data_root`. Each loaded sample carries `preprocessing: "n4_hdbet_skullstrip_crop"`.
 
 ## Preprocessing
 

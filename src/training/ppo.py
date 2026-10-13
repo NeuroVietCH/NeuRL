@@ -31,7 +31,16 @@ def _discounted_returns(rewards: list[float], gamma: float) -> list[float]:
     return list(reversed(out))
 
 
-def train_ppo(make_env: Callable[[], object], obs_dim: int, n_actions: int, updates: int = 8, config: PPOConfig | None = None, seed: int = 0):
+def train_ppo(
+    make_env: Callable[[], object],
+    obs_dim: int,
+    n_actions: int,
+    updates: int = 8,
+    config: PPOConfig | None = None,
+    seed: int = 0,
+    on_update: Callable[[dict[str, float], nn.Module], None] | None = None,
+):
+    """PPO over episodes from `make_env`. `on_update(stats, policy)` is called after every update."""
     cfg = config or PPOConfig()
     torch.manual_seed(seed)
     policy = ActorCriticPolicy(obs_dim, n_actions)
@@ -46,6 +55,8 @@ def train_ppo(make_env: Callable[[], object], obs_dim: int, n_actions: int, upda
         val_buf: list[float] = []
         episode_rewards: list[float] = []
         episode_lengths: list[int] = []
+        episode_correct: list[float] = []
+        episode_timeout: list[float] = []
 
         for _ in range(cfg.episodes_per_update):
             env = make_env()
@@ -53,11 +64,12 @@ def train_ppo(make_env: Callable[[], object], obs_dim: int, n_actions: int, upda
             rewards: list[float] = []
             done = False
             steps = 0
+            info: dict = {}
             while not done:
                 obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
                 with torch.no_grad():
                     action, logp, value = policy.act(obs_t)
-                next_obs, reward, done, _info = env.step(int(action.item()))
+                next_obs, reward, done, info = env.step(int(action.item()))
                 obs_buf.append(obs)
                 act_buf.append(int(action.item()))
                 logp_buf.append(float(logp.item()))
@@ -68,6 +80,8 @@ def train_ppo(make_env: Callable[[], object], obs_dim: int, n_actions: int, upda
             ret_buf.extend(_discounted_returns(rewards, cfg.gamma))
             episode_rewards.append(float(sum(rewards)))
             episode_lengths.append(steps)
+            episode_correct.append(float(info.get("prediction") == env.label))
+            episode_timeout.append(float(info.get("timeout", False)))
 
         obs_t = torch.as_tensor(np.asarray(obs_buf), dtype=torch.float32)
         act_t = torch.as_tensor(act_buf, dtype=torch.long)
@@ -92,6 +106,18 @@ def train_ppo(make_env: Callable[[], object], obs_dim: int, n_actions: int, upda
             nn.utils.clip_grad_norm_(policy.parameters(), cfg.max_grad_norm)
             optimizer.step()
 
-        history.append({"update": float(update), "reward_mean": float(np.mean(episode_rewards)), "episode_len_mean": float(np.mean(episode_lengths))})
+        stats = {
+            "update": float(update),
+            "reward_mean": float(np.mean(episode_rewards)),
+            "episode_len_mean": float(np.mean(episode_lengths)),
+            "train_acc": float(np.mean(episode_correct)),
+            "timeout_rate": float(np.mean(episode_timeout)),
+            "policy_loss": float(policy_loss.item()),
+            "value_loss": float(value_loss.item()),
+            "entropy": float(entropy.item()),
+        }
+        history.append(stats)
+        if on_update is not None:
+            on_update(stats, policy)
 
     return policy, history

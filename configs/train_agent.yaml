@@ -1,0 +1,34 @@
+# Training run for the active agent: python src/training/train_agent.py --config configs/train_agent.yaml
+# Sample data: cached OASIS-3 NeuroVFM tokens from N4 + HD-BET SKULL-STRIPPED volumes (stand-in until
+# the original images are available; see README "OASIS-3 sample data").
+data_root: /mnt/shared/datasets/NeuRL-dataset
+folds_csv: /mnt/shared/datasets/NeuRL-dataset/postprocessed/oasis_c3/split_info/folds.csv
+metadata_csv: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
+token_dir: /mnt/shared/datasets/NeuRL-dataset/oasis/processed/neurovfm_tokens
+fold: 0
+seed: 7
+
+environment:
+  max_steps: 16
+  move_penalty: -0.01
+  inspect_penalty: -0.02
+  correct_reward: 1.0
+  incorrect_reward: -1.0
+  timeout_prediction: 0   # CN
+
+ppo:
+  updates: 500
+  episodes_per_update: 64
+  epochs: 4
+  gamma: 0.98
+  clip_ratio: 0.2
+  lr: 0.0003
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+
+training:
+  val_fraction: 0.1        # subject-grouped hold-out from the fold's train split, used to pick best.pt
+  balanced_sampling: true  # draw CN and AD scans equally often for training episodes (~7% AD otherwise)
+  eval_every: 10           # updates between validation evals
+  out_dir: outputs/runs

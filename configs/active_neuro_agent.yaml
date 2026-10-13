@@ -1,8 +1,12 @@
 # Minimal Active Neuroimaging Diagnostic Agent baseline.
-# Paths point to the existing cached OASIS/NeuroVFM artifacts in sibling brainet.
-folds_csv: ../brainet/data/postprocessed/oasis_c3/split_info/folds.csv
-metadata_csv: ../brainet/data/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
-token_dir: ../brainet/data/oasis/processed/neurovfm_tokens
+# Sample data: cached OASIS-3 NeuroVFM tokens on the shared dataset volume (2013 scans, 1338 subjects).
+# CAVEAT: these tokens were extracted from N4 + HD-BET SKULL-STRIPPED + brain-cropped volumes
+# (shared_n4_hdbet_crop), not the strict unstripped NeuroVFM pipeline. Use them to develop the
+# architecture/training loop only; re-extract strict tokens once the original OASIS images are available.
+data_root: /mnt/shared/datasets/NeuRL-dataset
+folds_csv: /mnt/shared/datasets/NeuRL-dataset/postprocessed/oasis_c3/split_info/folds.csv
+metadata_csv: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
+token_dir: /mnt/shared/datasets/NeuRL-dataset/oasis/processed/neurovfm_tokens
 fold: 0
 n_per_class: 4
 seed: 7
