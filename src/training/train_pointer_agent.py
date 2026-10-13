@@ -1,7 +1,7 @@
 """Train the pointer agent on one OASIS fold: cross-fitted readers, then PPO (stage A or joint stage B).
 
     .venv/bin/python src/training/train_pointer_agent.py --config configs/pointer_agent.yaml \
-        [--fold 0] [--updates N] [--budget K] [--joint] [--readers <run>/readers.pt] [--name NAME]
+        [--fold 0] [--updates N] [--budget K] [--seed S] [--joint] [--readers <run>/readers.pt] [--name NAME]
 
 Steps:
     1. fold train split -> train / val by subject; fold test split held out until the end
@@ -36,10 +36,11 @@ from agent.pointer_policy import PointerActorCritic  # noqa: E402
 from env.data import build_token_manifest, load_split_samples  # noqa: E402
 from env.pointer_env import PointerEnv  # noqa: E402
 from env.token_bank import TokenBank  # noqa: E402
-from evaluation.pointer_eval import evaluate_pointer  # noqa: E402
+from evaluation.pointer_eval import BlindPolicy, evaluate_pointer  # noqa: E402
 from training.common import CsvLogger, assign_groups, describe, setup_logging, split_train_val  # noqa: E402
 from training.pointer_ppo import PointerPPOConfig, ppo_update, rollout  # noqa: E402
 from training.reader_training import (  # noqa: E402
+    FixedSets,
     ReaderConfig,
     balanced_draw,
     build_readers,
@@ -68,6 +69,7 @@ def main() -> None:
     parser.add_argument("--fold", type=int, default=None)
     parser.add_argument("--updates", type=int, default=None)
     parser.add_argument("--budget", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None, help="also changes the val split and cross-fitting groups")
     parser.add_argument("--joint", action="store_true", help="stage B: keep training readers during PPO")
     parser.add_argument("--readers", default=None, help="readers.pt from an earlier run with the same fold/seed (skips pretraining)")
     parser.add_argument("--name", default=None, help="run directory name (default: <timestamp>_fold<k>_b<budget>[_joint])")
@@ -82,6 +84,8 @@ def main() -> None:
         cfg["environment"]["budget"] = args.budget
     if args.joint:
         cfg["joint"]["enabled"] = True
+    if args.seed is not None:
+        cfg["seed"] = args.seed
     seed, train_cfg, env_cfg, joint_cfg = int(cfg["seed"]), cfg["training"], cfg["environment"], cfg["joint"]
     reader_cfg = dataclass_from(ReaderConfig, cfg["reader"])
     ppo_cfg = dataclass_from(PointerPPOConfig, cfg["ppo"])
@@ -148,6 +152,9 @@ def main() -> None:
     policy = PointerActorCritic(bank.embedding_dim, **cfg["policy"]).to(dev)
     optimizer = torch.optim.Adam(policy.parameters(), lr=ppo_cfg.lr)
     reader_opts = make_reader_optimizers(readers, float(joint_cfg["lr"]), reader_cfg.weight_decay) if joint_cfg["enabled"] else None
+    guard = None
+    if joint_cfg["enabled"] and joint_cfg.get("guard", True):
+        guard = FixedSets(bank, splits["val"], reader_cfg.eval_sizes, reader_cfg.eval_draws, seed + 11)
     gen = torch.Generator(device=dev).manual_seed(seed + 7)
     n_updates, eval_every = int(cfg["ppo"]["updates"]), int(train_cfg["eval_every"])
     select = str(train_cfg["select_metric"])
@@ -171,11 +178,12 @@ def main() -> None:
         if joint_cfg["enabled"]:
             pending.append({k: buf[k] for k in ("scans", "order", "t")})
             if update % int(joint_cfg["every"]) == 0:
-                row["reader_loss"] = update_readers(readers, reader_opts, bank, pending, splits["train"], groups, int(joint_cfg["steps"]),
-                                                    int(joint_cfg["batch_size"]), float(joint_cfg["random_fraction"]), reader_cfg.max_set, gen)
+                row["reader_loss"], row["readers_reverted"] = update_readers(
+                    readers, reader_opts, bank, pending, splits["train"], groups, int(joint_cfg["steps"]), int(joint_cfg["batch_size"]),
+                    float(joint_cfg["random_fraction"]), reader_cfg.max_set, gen, guard, float(joint_cfg.get("guard_tolerance", 0.0)))
                 pending = []
             else:
-                row["reader_loss"] = float("nan")
+                row["reader_loss"], row["readers_reverted"] = float("nan"), float("nan")
         train_csv.write(row)
         elapsed = time.time() - t_start
         log.info(f"[{update:>4}/{n_updates}] return {row['return']:+.3f} | looks {row['looks']:.1f} | stop early {row['early_stop_rate']:.2f} "
@@ -199,12 +207,15 @@ def main() -> None:
     policy.load_state_dict(ckpt["policy"])
     readers.load_state_dict(ckpt["readers"])
     test_metrics, traces = evaluate_pointer(env, policy, splits["test"], random_draws=int(train_cfg["random_draws"]), seed=seed)
-    test_metrics = {"best_update": ckpt["update"], **test_metrics}
+    blind_metrics, _ = evaluate_pointer(env, BlindPolicy(policy), splits["test"], random_draws=int(train_cfg["random_draws"]), seed=seed)
+    test_metrics = {"best_update": ckpt["update"], **test_metrics, **{f"blind_{k}": v for k, v in blind_metrics.items()}}
     json.dump(test_metrics, open(run_dir / "test_metrics.json", "w"), indent=2)
     np.savez(run_dir / "test_traces.npz", sample_id=np.asarray(bank.sample_ids)[traces["scans"]], **traces)
     log.info(f"TEST (best.pt @ update {ckpt['update']}): return {test_metrics['mean_return']:+.3f} vs random {test_metrics['random_return_matched']:+.3f} | auc {test_metrics['auc']:.3f} vs random {test_metrics['random_auc_matched']:.3f} "
              f"(gain {test_metrics['auc_gain']:+.3f}) | bal acc {test_metrics['balanced_accuracy']:.3f} "
              f"(CN {test_metrics['recall_cn']:.3f} / AD {test_metrics['recall_ad']:.3f}) | looks {test_metrics['mean_looks']:.1f}")
+    log.info(f"TEST blind (same policy, seen content hidden): auc {test_metrics['blind_auc']:.3f} vs random {test_metrics['blind_random_auc_matched']:.3f} "
+             f"| looks {test_metrics['blind_mean_looks']:.1f}")
     log.info(f"done in {(time.time() - t_start) / 60:.1f}m -> {run_dir}")
 
 

@@ -2,7 +2,7 @@
 
     .venv/bin/python src/evaluation/summarize_pointer_runs.py [--glob 'sweep_fold*'] [--runs_dir outputs/pointer_runs]
 
-Groups runs by (stage, budget) from each run's config.yaml (stage B = joint readers) and reports,
+Groups runs by (stage, budget) over folds and seeds, from each run's config.yaml (stage B = joint readers) and reports,
 per group, the mean and std over folds of test AUC, random-looks AUC at matched looks, their gain,
 the same for return, and in how many folds the agent beat random. Writes `<runs_dir>/summary_<glob>.csv`.
 """
@@ -33,17 +33,19 @@ def main() -> None:
         cfg = yaml.safe_load(open(run / "config.yaml"))
         m = json.load(open(metrics_path))
         rows.append({
-            "run": run.name, "fold": cfg["fold"], "stage": "B" if cfg["joint"]["enabled"] else "A",
+            "run": run.name, "fold": cfg["fold"], "seed": cfg["seed"], "stage": "B" if cfg["joint"]["enabled"] else "A",
             "budget": cfg["environment"]["budget"], **{k: m[k] for k in (
                 "auc", "random_auc_matched", "auc_gain", "mean_return", "random_return_matched", "return_gain",
                 "balanced_accuracy", "mean_looks", "best_update")},
+            "blind_auc": m.get("blind_auc", float("nan")),
         })
     if not rows:
         raise SystemExit("no finished runs matched")
-    per_run = pd.DataFrame(rows).sort_values(["stage", "budget", "fold"])
+    per_run = pd.DataFrame(rows).sort_values(["stage", "budget", "seed", "fold"])
+    per_run["adapt_gain"] = per_run["auc"] - per_run["blind_auc"]  # agent vs the same policy blind to what it saw
     print(per_run.round(3).to_string(index=False))
 
-    cols = ["auc", "random_auc_matched", "auc_gain", "mean_return", "random_return_matched", "return_gain", "balanced_accuracy", "mean_looks"]
+    cols = ["auc", "random_auc_matched", "auc_gain", "blind_auc", "adapt_gain", "mean_return", "random_return_matched", "return_gain", "balanced_accuracy", "mean_looks"]
     g = per_run.groupby(["stage", "budget"])
     summary = g[cols].agg(["mean", "std"])
     summary.columns = [f"{c}_{s}" for c, s in summary.columns]
@@ -55,7 +57,7 @@ def main() -> None:
         print(f"stage {stage} budget {budget} ({int(r['folds'])} folds): "
               f"AUC {r['auc_mean']:.3f} ({r['auc_std']:.3f}) vs random {r['random_auc_matched_mean']:.3f} -> gain {r['auc_gain_mean']:+.3f} ({r['auc_gain_std']:.3f}), wins {int(r['auc_wins'])}/{int(r['folds'])} | "
               f"return {r['mean_return_mean']:+.3f} vs random {r['random_return_matched_mean']:+.3f} -> gain {r['return_gain_mean']:+.3f} ({r['return_gain_std']:.3f}), wins {int(r['return_wins'])}/{int(r['folds'])} | "
-              f"bal acc {r['balanced_accuracy_mean']:.3f} | looks {r['mean_looks_mean']:.1f}")
+              f"blind {r['blind_auc_mean']:.3f} (adapt gain {r['adapt_gain_mean']:+.3f}) | bal acc {r['balanced_accuracy_mean']:.3f} | looks {r['mean_looks_mean']:.1f}")
     out = Path(args.runs_dir) / f"summary_{args.glob.replace('*', '')}.csv"
     summary.to_csv(out)
     per_run.to_csv(out.with_name(out.stem + "_per_run.csv"), index=False)

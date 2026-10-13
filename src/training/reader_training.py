@@ -151,12 +151,15 @@ def make_reader_optimizers(readers: ReaderEnsemble, lr: float, weight_decay: flo
 
 def update_readers(readers: ReaderEnsemble, optimizers: list[torch.optim.Optimizer], bank: TokenBank, episodes: list[dict],
                    train_scans: torch.Tensor, groups: torch.Tensor, steps: int, batch_size: int, random_fraction: float,
-                   max_set: int, generator: torch.Generator | None = None) -> float:
+                   max_set: int, generator: torch.Generator | None = None, guard: FixedSets | None = None,
+                   guard_tolerance: float = 0.0) -> tuple[float, int]:
     """Joint stage: train readers on the chooser's picks mixed with random subsets.
 
     `episodes`: rollouts with `scans`, `order`, `t`. A picked set is a random prefix order[:L],
     1 <= L <= t. Reader i trains only on scans with group != i (picks and random sets alike).
-    Returns the mean training loss.
+    With `guard` (fixed random val subsets), a reader's update is undone if it raises that reader's
+    val balanced BCE by more than `guard_tolerance`, so joint training can't degrade the readers.
+    Returns the mean training loss and the number of reverted reader updates.
     """
     scans = torch.cat([e["scans"] for e in episodes])
     order = torch.cat([e["order"] for e in episodes])
@@ -165,7 +168,7 @@ def update_readers(readers: ReaderEnsemble, optimizers: list[torch.optim.Optimiz
     scans, order, t = scans[keep], order[keep], t[keep]
     if order.shape[1] < max_set:
         order = torch.cat([order, order.new_full((len(order), max_set - order.shape[1]), -1)], dim=1)
-    labels, losses = bank.labels, []
+    labels, losses, reverted = bank.labels, [], 0
     n_rand = int(round(batch_size * random_fraction))
     n_pick = batch_size - n_rand
     dev = bank.device
@@ -174,6 +177,10 @@ def update_readers(readers: ReaderEnsemble, optimizers: list[torch.optim.Optimiz
         allowed = train_scans[groups[train_scans] != i]
         if len(rows_ok) == 0:
             continue
+        if guard is not None:
+            before_state = copy.deepcopy(reader.state_dict())
+            before_opt = copy.deepcopy(opt.state_dict())
+            before = _guard_bce(reader, guard, labels)
         reader.train()
         for _ in range(steps):
             parts = []
@@ -197,7 +204,17 @@ def update_readers(readers: ReaderEnsemble, optimizers: list[torch.optim.Optimiz
             opt.step()
             losses.append(float(loss.item()))
         reader.eval()
-    return float(np.mean(losses)) if losses else float("nan")
+        if guard is not None and _guard_bce(reader, guard, labels) > before + guard_tolerance:
+            reader.load_state_dict(before_state)
+            opt.load_state_dict(before_opt)
+            reverted += 1
+    return (float(np.mean(losses)) if losses else float("nan")), reverted
+
+
+def _guard_bce(reader: torch.nn.Module, guard: FixedSets, labels: torch.Tensor) -> float:
+    reader.eval()
+    preds = guard.predict(lambda s, e, p, m: reader(e, p, m))
+    return float(np.mean([balanced_bce(logit, labels[s]) for _, s, logit in preds]))
 
 
 def build_readers(cfg: ReaderConfig, in_dim: int) -> ReaderEnsemble:

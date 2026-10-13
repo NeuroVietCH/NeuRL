@@ -13,6 +13,23 @@ from env.pointer_env import PointerEnv, true_label_loss
 from training.pointer_ppo import rollout
 
 
+class BlindPolicy(torch.nn.Module):
+    """The same policy with what it has seen hidden: inspected embeddings zeroed, reader belief fixed at 0.5.
+
+    Its picks can then depend only on positions and step count, i.e. one fixed location sequence for
+    every scan. If it matches the real agent, the agent's gain is not from adapting to each scan.
+    """
+
+    def __init__(self, policy: torch.nn.Module) -> None:
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, obs: dict[str, torch.Tensor]):
+        belief = obs["belief"].clone()
+        belief[:, 0], belief[:, 1] = 0.5, 0.0
+        return self.policy({**obs, "seen_emb": torch.zeros_like(obs["seen_emb"]), "belief": belief})
+
+
 def _auc(y: np.ndarray, p: np.ndarray) -> float:
     return float(roc_auc_score(y, p)) if 0 < y.sum() < len(y) else float("nan")
 

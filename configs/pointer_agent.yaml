@@ -53,10 +53,12 @@ ppo:
 joint:                     # stage B; false = stage A (readers frozen after pretraining)
   enabled: false
   every: 10                # PPO updates between reader updates
-  steps: 50                # optimizer steps per reader per update
+  steps: 20                # optimizer steps per reader per update (was 50: budget-4 runs degraded the readers)
   batch_size: 256
-  lr: 0.0001
-  random_fraction: 0.5     # share of each reader batch that is random subsets instead of the agent's picks
+  lr: 0.00003              # was 1e-4
+  random_fraction: 0.75    # share of each reader batch that is random subsets instead of the agent's picks (was 0.5)
+  guard: true              # undo a reader's update if it raises its val balanced BCE on fixed random subsets
+  guard_tolerance: 0.01    # allowed rise in val balanced BCE (0 reverted ~all updates in a synthetic test)
 
 training:
   val_fraction: 0.1        # subject-grouped hold-out from the fold's train split
