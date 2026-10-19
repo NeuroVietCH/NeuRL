@@ -148,7 +148,8 @@ def main() -> None:
         f"k={k}: oof {report[f'oof_auc_k{k}']:.3f} val {report[f'val_auc_k{k}']:.3f} test {report[f'test_auc_k{k}']:.3f}" for k in reader_cfg.eval_sizes))
 
     # 4. PPO.
-    env = PointerEnv(bank, readers, budget=budget, look_cost=env_cfg["look_cost"], loss_clamp=env_cfg["loss_clamp"])
+    env = PointerEnv(bank, readers, budget=budget, look_cost=env_cfg["look_cost"], loss_clamp=env_cfg["loss_clamp"],
+                     allow_stop=bool(env_cfg.get("allow_stop", True)))
     policy = PointerActorCritic(bank.embedding_dim, **cfg["policy"]).to(dev)
     optimizer = torch.optim.Adam(policy.parameters(), lr=ppo_cfg.lr)
     reader_opts = make_reader_optimizers(readers, float(joint_cfg["lr"]), reader_cfg.weight_decay) if joint_cfg["enabled"] else None
@@ -162,7 +163,7 @@ def main() -> None:
     best = {"value": -float("inf"), "update": -1}
     pending: list[dict] = []
     log.info(f"PPO: {n_updates} updates x {ppo_cfg.episodes_per_update} episodes, budget {budget}, "
-             f"look cost {env_cfg['look_cost']}, joint readers {'on' if joint_cfg['enabled'] else 'off'}")
+             f"look cost {env_cfg['look_cost']}, STOP {'on' if env.allow_stop else 'off'}, content {'on' if policy.content else 'off'}, joint readers {'on' if joint_cfg['enabled'] else 'off'}")
     t_start = time.time()
     for update in range(1, n_updates + 1):
         scans = balanced_draw(splits["train"], bank.labels, ppo_cfg.episodes_per_update, gen)

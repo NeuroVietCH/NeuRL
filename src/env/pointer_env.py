@@ -8,6 +8,7 @@ it is picked. The reader scores the evidence after every look:
 
 so with gamma = 1 an episode's return is loss(nothing seen) - loss(final evidence) - cost * looks.
 The episode ends at STOP or after `budget` looks; the diagnosis is the reader's final P(AD).
+With allow_stop=False, STOP is masked and every episode uses the full budget.
 """
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ import torch
 from env.token_bank import TokenBank
 
 
-def build_obs(bank: TokenBank, scans: torch.Tensor, order: torch.Tensor, t: torch.Tensor, belief: torch.Tensor, budget: int) -> dict[str, torch.Tensor]:
+def build_obs(bank: TokenBank, scans: torch.Tensor, order: torch.Tensor, t: torch.Tensor, belief: torch.Tensor, budget: int,
+              allow_stop: bool = True) -> dict[str, torch.Tensor]:
     """Policy input after t[b] looks: inspected tokens (order[b, :t[b]]), candidate positions, belief features.
 
     `order` [B, >=max(t)] holds picked token indices in pick order (-1 = none yet); `belief` [B] is the
@@ -35,6 +37,7 @@ def build_obs(bank: TokenBank, scans: torch.Tensor, order: torch.Tensor, t: torc
     return {
         "seen_emb": seen_emb, "seen_pos": seen_pos, "seen_mask": seen_mask,
         "cand_pos": cand_pos, "cand_mask": cand_valid & ~inspected, "belief": feats,
+        "stop_mask": torch.full_like(t, allow_stop, dtype=torch.bool),
     }
 
 
@@ -45,12 +48,14 @@ def true_label_loss(logit: torch.Tensor, label: torch.Tensor, clamp: float) -> t
 
 
 class PointerEnv:
-    def __init__(self, bank: TokenBank, readers: torch.nn.Module, budget: int = 8, look_cost: float = 0.01, loss_clamp: float = 0.01) -> None:
+    def __init__(self, bank: TokenBank, readers: torch.nn.Module, budget: int = 8, look_cost: float = 0.01, loss_clamp: float = 0.01,
+                 allow_stop: bool = True) -> None:
         self.bank = bank
         self.readers = readers
         self.budget = int(budget)
         self.look_cost = float(look_cost)
         self.loss_clamp = float(loss_clamp)
+        self.allow_stop = bool(allow_stop)
 
     @torch.no_grad()
     def score(self, scans: torch.Tensor, order: torch.Tensor, t: torch.Tensor, groups: torch.Tensor) -> torch.Tensor:
@@ -78,7 +83,7 @@ class PointerEnv:
         self.loss = true_label_loss(self.belief, self.labels, self.loss_clamp)
 
     def observation(self) -> dict[str, torch.Tensor]:
-        return build_obs(self.bank, self.scans, self.order, self.t, self.belief, self.budget)
+        return build_obs(self.bank, self.scans, self.order, self.t, self.belief, self.budget, self.allow_stop)
 
     @torch.no_grad()
     def step(self, stop: torch.Tensor, token: torch.Tensor) -> torch.Tensor:

@@ -250,6 +250,43 @@ Conclusion: with these context-mixed, skull-stripped stand-in embeddings, active
 
 A cheap check before the strict re-extraction: on the same tokens, measure how much the local-only part of the signal varies across regions. For example, train a reader on single tokens per region and compare AUC across regions. If all regions give about the same AUC, no selection policy can win.
 
+### Budget 8 with STOP (2026-10-13): `outputs/pointer_runs/sweep2_fold*_s7_B_b8`
+
+Guarded stage B, seed 7, sweep 1 readers. Test AUC 0.867 vs random 0.856, gain +0.011 (std 0.037), 3/5 wins. Agent − blind −0.004.
+- Looks per fold ranged from 1.3 to 8.0. Best checkpoints ranged from update 40 to 960.
+- Fold 0's +0.064 came from a weak random draw (0.818); the blind policy matched the agent.
+- The guard undid 95–99% of reader updates, so the readers stayed close to frozen.
+- In folds 1 and 4, train return rose all run while val return fell below 0. The policy sees inspected embeddings, so it can recognise a training scan it has seen ~100 times and learn which tokens push that scan's reader toward the known label. That doesn't carry over to new scans.
+
+### Sweep 3: budget 8, no STOP, tuning (2026-10-13): `outputs/pointer_runs/sweep3_*`
+
+Changes:
+- `environment.allow_stop: false` (new default): STOP is masked, so every episode uses all 8 looks.
+- `policy.content` (new): with `false`, the policy never sees inspected embeddings or the belief. It learns one fixed location sequence, which can't be tuned to individual training scans.
+
+Seed 7, 5 folds, sweep 1 readers (summaries: `outputs/pointer_runs/summary_sweep3_fold_s7_<variant>_b8.csv`):
+
+| Variant | Test AUC | Random (8 tokens) | Gain mean (std) | Wins |
+|---|---|---|---|---|
+| A (frozen readers) | 0.886 | 0.883 | +0.003 (0.009) | 2/5 |
+| B guarded | 0.881 | 0.883 | −0.001 (0.015) | 2/5 |
+| B guarded, 300 updates | 0.882 | 0.883 | −0.001 (0.014) | 3/5 |
+| **B guarded, `content: false`** | **0.892** | 0.883 | **+0.009 (0.007)** | **5/5** |
+| B unguarded | 0.865 | 0.880 | −0.015 (0.013) | 0/5 |
+
+Seeds 7/8/9 × 5 folds (seeds 8/9 use the sweep 2 readers):
+- B guarded: gain −0.005 (std 0.022), 8/15 wins.
+- `content: false`: gain +0.009 (std 0.016), 12/15 wins. Fold-level p = 0.10 for AUC and p = 0.005 for return gain (+0.071).
+- `content: false` minus B: +0.013 AUC, 11/15, p = 0.17.
+
+Findings:
+1. **The position-only policy beats the full agent and is the most consistent setting.** Seeing content only adds a way to overfit training scans. This agrees with sweep 2: agent ≈ blind policy.
+2. **Training for fewer updates doesn't help.**
+3. **The guard is needed.** Without it, the readers degrade: random-look return falls to −0.07 vs +0.10 guarded, and AUC is below random in every fold.
+4. **The gain is still small:** ~+0.01 AUC from good fixed locations. Val return also drifts down late in training for the position-only policy, so best-checkpoint selection on ~9 val AD scans is still noisy.
+
+New defaults: budget 8, `allow_stop: false`, `content: false`. Run stage B with `--joint`; the joint default is still off.
+
 ## Baselines the agent must beat (same look budget)
 
 - k random tokens → classifier `f`

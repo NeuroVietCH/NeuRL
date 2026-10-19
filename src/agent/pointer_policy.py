@@ -5,6 +5,9 @@
     logits  = [score_1 .. score_N, stop(h_t)], inspected / padding tokens masked out
 
 Candidate keys never use a token's embedding: content is revealed only by picking the token.
+STOP is masked where obs["stop_mask"] is False. With content=False the policy never sees inspected
+embeddings or the reader's belief, so it can only learn one fixed location sequence (and cannot
+recognise, and memorise, individual training scans).
 """
 from __future__ import annotations
 
@@ -19,9 +22,9 @@ MASKED = -1e9  # finite so masked actions give p = 0 without NaN entropies
 
 
 class PointerActorCritic(nn.Module):
-    def __init__(self, in_dim: int = 768, d: int = 128, layers: int = 2, heads: int = 4, n_belief: int = 3) -> None:
+    def __init__(self, in_dim: int = 768, d: int = 128, layers: int = 2, heads: int = 4, n_belief: int = 3, content: bool = True) -> None:
         super().__init__()
-        self.d = d
+        self.d, self.content = d, content
         # dropout=0: PPO's ratio needs the same network at rollout and update time.
         self.memory = SetEncoder(in_dim, d, layers, heads, dropout=0.0)
         self.state = nn.Sequential(nn.Linear(d + n_belief, d), nn.GELU(), nn.Linear(d, d))
@@ -32,8 +35,12 @@ class PointerActorCritic(nn.Module):
 
     def forward(self, obs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Logits [B, N + 1] (last column = STOP) and value [B]."""
-        h = self.memory(obs["seen_emb"], obs["seen_pos"], obs["seen_mask"])
-        h = self.state(torch.cat([h, obs["belief"]], dim=-1))
+        seen_emb, belief = obs["seen_emb"], obs["belief"]
+        if not self.content:
+            seen_emb, belief = torch.zeros_like(seen_emb), belief * belief.new_tensor([0.0, 0.0, 1.0])
+        h = self.memory(seen_emb, obs["seen_pos"], obs["seen_mask"])
+        h = self.state(torch.cat([h, belief], dim=-1))
         scores = torch.einsum("bd,bnd->bn", self.query(h), self.key(obs["cand_pos"])) / math.sqrt(self.d)
         scores = scores.masked_fill(~obs["cand_mask"], MASKED)
-        return torch.cat([scores, self.stop(h)], dim=-1), self.value(h).squeeze(-1)
+        stop = self.stop(h).masked_fill(~obs["stop_mask"][:, None], MASKED)
+        return torch.cat([scores, stop], dim=-1), self.value(h).squeeze(-1)

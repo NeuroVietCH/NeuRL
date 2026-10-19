@@ -95,7 +95,7 @@ def ppo_update(policy: nn.Module, optimizer: torch.optim.Optimizer, env: Pointer
         for start in range(0, len(perm), cfg.minibatch_size):
             mb = perm[start:start + cfg.minibatch_size]
             rows, steps = b[mb], s[mb]
-            obs = build_obs(env.bank, buf["scans"][rows], buf["order"][rows], steps, buf["belief"][rows, steps], env.budget)
+            obs = build_obs(env.bank, buf["scans"][rows], buf["order"][rows], steps, buf["belief"][rows, steps], env.budget, env.allow_stop)
             logits, value = policy(obs)
             n_cand = logits.shape[1] - 1
             action = torch.where(buf["stop"][rows, steps], n_cand, buf["token"][rows, steps])
