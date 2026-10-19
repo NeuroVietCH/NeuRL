@@ -96,7 +96,6 @@ def plot_mri_trajectory_3d(
     volume_path: str | Path,
     token_coords: np.ndarray,
     grid_shape: np.ndarray | tuple[int, int, int],
-    anomaly_scores: np.ndarray,
     visited_indices: np.ndarray,
     inspected_indices: np.ndarray,
     title: str,
@@ -121,8 +120,8 @@ def plot_mri_trajectory_3d(
         center = np.asarray(volume.shape) // 2
     x0, y0, z0 = [int(v) for v in center]
 
-    fig = plt.figure(figsize=(13, 7), constrained_layout=True)
-    ax = fig.add_subplot(1, 2, 1, projection="3d")
+    fig = plt.figure(figsize=(8, 7), constrained_layout=True)
+    ax = fig.add_subplot(1, 1, 1, projection="3d")
 
     # Orthogonal grayscale MRI slices in native loaded voxel coordinates.
     y, z = np.meshgrid(np.arange(volume.shape[1]), np.arange(volume.shape[2]), indexing="ij")
@@ -148,10 +147,9 @@ def plot_mri_trajectory_3d(
     if len(path):
         ax.plot(path[:, 0], path[:, 1], path[:, 2], color="red", linewidth=3.0, marker="o", markersize=5, label="visited path")
     if len(inspected_xyz):
-        inspected_scores = np.asarray(anomaly_scores, dtype=np.float32)[inspected]
         sc = ax.scatter(
             inspected_xyz[:, 0], inspected_xyz[:, 1], inspected_xyz[:, 2],
-            c=inspected_scores, cmap="magma", edgecolor="white", linewidth=1.2,
+            c=np.arange(len(inspected_xyz)), cmap="viridis", edgecolor="white", linewidth=1.2,
             s=95, depthshade=False, label="inspected evidence",
         )
 
@@ -165,15 +163,7 @@ def plot_mri_trajectory_3d(
     ax.view_init(elev=22, azim=-55)
     ax.legend(loc="upper left")
     if sc is not None:
-        fig.colorbar(sc, ax=ax, shrink=0.65, pad=0.08, label="inspected anomaly score")
-
-    ax2 = fig.add_subplot(1, 2, 2)
-    inspected_scores = np.asarray(anomaly_scores, dtype=np.float32)[inspected] if len(inspected) else np.asarray([], dtype=np.float32)
-    ax2.plot(inspected_scores, marker="o")
-    ax2.set_title("Inspected evidence anomaly scores")
-    ax2.set_xlabel("inspection step")
-    ax2.set_ylabel("score")
-    ax2.grid(alpha=0.25)
+        fig.colorbar(sc, ax=ax, shrink=0.65, pad=0.08, label="inspection order")
 
     if out_path is not None:
         fig.savefig(out_path, dpi=180)
@@ -185,7 +175,6 @@ def plot_mri_trajectory_3d_interactive(
     volume_path: str | Path,
     token_coords: np.ndarray,
     grid_shape: np.ndarray | tuple[int, int, int],
-    anomaly_scores: np.ndarray,
     visited_indices: np.ndarray,
     inspected_indices: np.ndarray,
     title: str,
@@ -210,7 +199,6 @@ def plot_mri_trajectory_3d_interactive(
     inspected = np.asarray(inspected_indices, dtype=int)
     path = voxel_coords[visited] if len(visited) else np.empty((0, 3), dtype=np.float32)
     inspected_xyz = voxel_coords[inspected] if len(inspected) else np.empty((0, 3), dtype=np.float32)
-    inspected_scores = np.asarray(anomaly_scores, dtype=np.float32)[inspected] if len(inspected) else np.asarray([], dtype=np.float32)
 
     if len(path):
         center = np.clip(np.round(path.mean(axis=0)).astype(int), 0, np.asarray(volume.shape) - 1)
@@ -269,12 +257,12 @@ def plot_mri_trajectory_3d_interactive(
             mode="markers", name="inspected evidence",
             marker=dict(
                 size=7,
-                color=inspected_scores,
-                colorscale="Magma",
-                colorbar=dict(title="inspected anomaly"),
+                color=np.arange(len(inspected_xyz)),
+                colorscale="Viridis",
+                colorbar=dict(title="inspection order"),
                 line=dict(color="white", width=2),
             ),
-            text=[f"score={s:.3f}" for s in inspected_scores],
+            text=[f"inspection #{i + 1}" for i in range(len(inspected_xyz))],
             hovertemplate="inspected<br>x=%{x:.1f}<br>y=%{y:.1f}<br>z=%{z:.1f}<br>%{text}<extra></extra>",
         ))
 
