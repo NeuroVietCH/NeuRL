@@ -73,9 +73,12 @@ def main() -> None:
     parser.add_argument("--joint", action="store_true", help="stage B: keep training readers during PPO")
     parser.add_argument("--readers", default=None, help="readers.pt from an earlier run with the same fold/seed (skips pretraining)")
     parser.add_argument("--name", default=None, help="run directory name (default: <timestamp>_fold<k>_b<budget>[_joint])")
+    parser.add_argument("--token_dir", default=None, help="overrides token_dir, e.g. .../neurovfm_tokens_raw_global (unstripped)")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
+    if args.token_dir is not None:
+        cfg["token_dir"] = args.token_dir
     if args.fold is not None:
         cfg["fold"] = args.fold
     if args.updates is not None:
@@ -101,7 +104,7 @@ def main() -> None:
     setup_logging(log, run_dir)
     yaml.safe_dump(cfg, open(run_dir / "config.yaml", "w"), sort_keys=False)
     log.info(f"run dir: {run_dir}")
-    log.info("data: OASIS-3 NeuroVFM tokens from SKULL-STRIPPED (N4 + HD-BET) volumes - stand-in data")
+    log.info(f"data: OASIS-3 NeuroVFM tokens from {cfg['token_dir']}")
 
     # 1. Data.
     mk = dict(fold=cfg["fold"], data_root=cfg["data_root"])
