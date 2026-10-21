@@ -398,20 +398,39 @@ class NeuroVFMEncoder:
 
         sel = torch.from_numpy(keep)
         n = int(keep.sum())
+        # Local context: one packed sequence per window, so attention stays inside the window.
+        # Tokens are sorted by window for packing and put back in grid order afterwards.
+        window = nf.get("local_window")
+        if window is None:
+            order, seqlens = np.arange(n), np.array([n])
+        else:
+            window = np.asarray(window, dtype=np.int64)
+            if window.shape != (3,) or (window < 1).any():
+                raise ValueError(f"neurovfm.local_window must be 3 positive ints [D, H, W] or null, got {nf.get('local_window')}")
+            grid = np.array(img_arr.shape) // np.array(patch_size)
+            win_grid = tuple(int(v) for v in -(-grid // window))  # ceil: partial windows at the far edges
+            win_ids = np.ravel_multi_index((coords[keep] // window).T, win_grid)
+            order = np.argsort(win_ids, kind="stable")
+            _, seqlens = np.unique(win_ids[order], return_counts=True)
+        n_seq = len(seqlens)
+        cu_seqlens = torch.from_numpy(np.concatenate([[0], np.cumsum(seqlens)])).to(torch.int32)
+        packed = torch.from_numpy(order)
         batch = {
-            "img": torch.from_numpy(tokens).float()[sel],
-            "coords": torch.from_numpy(coords).long()[sel],
+            "img": torch.from_numpy(tokens).float()[sel][packed],
+            "coords": torch.from_numpy(coords).long()[sel][packed],
             "series_masks_indices": torch.tensor([]),
-            "series_cu_seqlens": torch.tensor([0, n], dtype=torch.int32),
-            "series_max_len": n,
-            "study_cu_seqlens": torch.tensor([0, n], dtype=torch.int32),
-            "study_max_len": 1,
-            "mode": [modality],
-            "path": [str(scan_path)],
-            "size": [img_arr.shape],
+            "series_cu_seqlens": cu_seqlens,
+            "series_max_len": int(seqlens.max()),
+            "study_cu_seqlens": torch.tensor([0, n_seq], dtype=torch.int32),
+            "study_max_len": n_seq,
+            "mode": [modality] * n_seq,
+            "path": [str(scan_path)] * n_seq,
+            "size": [img_arr.shape] * n_seq,
         }
         with torch.inference_mode():
-            embeddings = self.encoder.embed(batch, use_amp=bool(nf.get("use_amp", True))).detach().float().cpu().numpy()
+            packed_emb = self.encoder.embed(batch, use_amp=bool(nf.get("use_amp", True))).detach().float().cpu().numpy()
+        embeddings = np.empty_like(packed_emb)
+        embeddings[order] = packed_emb
         metadata = {
             "paths": [str(p) for p in batch["path"]],
             "modes": [str(m) for m in batch["mode"]],
@@ -423,6 +442,8 @@ class NeuroVFMEncoder:
             "mask_path": str(mask_path) if mask_path is not None else None,
             "min_brain_fraction": None if mask_path is None else min_brain_fraction,
             "added_by_mask_rule": int((keep & ~base).sum()),
+            "local_window": None if window is None else [int(v) for v in window],
+            "n_attention_windows": n_seq,
         }
         return TokenBatch(
             sample_id=sample_id_from_path(scan_path),
