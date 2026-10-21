@@ -292,3 +292,28 @@ New defaults: budget 8, `allow_stop: false`, `content: false`. Run stage B with 
 - k random tokens → classifier `f`
 - full scan (all tokens) → `f`: the ceiling
 - brain size / token count only: checks the shape leak (§1, finding 7)
+
+### Sweep 4: unstripped NeuroVFM tokens (2026-10-21, IN PROGRESS): `outputs/pointer_runs/sweep4_*`
+
+Data change only. The model and settings are the sweep 3 best setup (`Bfixed`: stage B, guarded joint readers, `content: false`, budget 8, no STOP).
+- Tokens were re-extracted from the original unstripped OASIS-3 T1s (`oasis/raw/OASIS`, 2013 scans) using `neuro_evidence.extract_tokens` (branch `extract-oasis-raw-tokens`). This follows the strict NeuroVFM pipeline: no N4, no skull strip, NeuroVFM's own background rule. That matches the NeuroVFM paper, whose preprocessing is only resampling to 1×1×4 mm, percentile clipping and background removal.
+  - `rawG`: `oasis/processed/neurovfm_tokens_raw_global`, the original encoder.
+  - `rawL`: `oasis/processed/neurovfm_tokens_raw_local_w2x4x4`. Attention is limited to 2×4×4-patch windows (8×64×64 mm, `neurovfm.local_window`).
+  - Token counts are 340–1184 per scan (median 549), against ~168 in the skull-stripped cache. Skull, scalp and some air are kept.
+- Readers are pretrained from scratch on each token set (no `--readers` reuse). Each run: `train_pointer_agent.py --fold f --seed s --joint --token_dir <dir> --name sweep4_fold{f}_s{s}_{rawG|rawL}_b8`.
+- Practical constraints:
+  - Copy the token dirs to local disk (`data/oasis_tokens/`) first. Loading from the shared mount takes ~7 min per run.
+  - Run at most 3 jobs at once. The machine has 24 GB RAM and a run with these tokens uses ~4.8 GB; with 4 concurrent jobs, two runs were OOM-killed.
+
+Interim, `rawG`, 8/15 runs (folds 0, 1, 3, 4 × seeds 7, 8). Comparison is paired with sweep 3 `Bfixed` (skull-stripped) on the same fold and seed:
+
+| Tokens | Test AUC | Random (8 tokens) | Gain | Wins | Bal. acc |
+|---|---|---|---|---|---|
+| Skull-stripped (sweep 3, same 8 runs) | 0.885 | 0.882 | +0.003 | 6/8 | 0.811 |
+| **Unstripped, global (`rawG`)** | **0.895** | 0.879 | **+0.016** | **8/8** | 0.798 |
+
+Preliminary reading:
+- The gain over random is larger on unstripped tokens.
+- Random-look AUC barely changes, but random picks now often land on skull, scalp or air, so choosing where to look matters more.
+- Balanced accuracy is a little lower.
+- Still to do: fold 2, seed 9, all of `rawL`, and a fold-level test.
