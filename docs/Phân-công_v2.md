@@ -15,112 +15,168 @@ Replaces the split in [`Phân-công.md`](Phân-công.md) from 22 Oct onward. Pla
 | `rawG` (global) | 0.882 | 0.874 | +0.009 (0.021) | 13/15 | 0.791 | 0.08 |
 | `rawL` (local window) | 0.851 | 0.845 | +0.006 (0.026) | 9/15 | 0.768 | 0.36 |
 
-Active selection still adds only ~+0.01 AUC over random, and a blind policy matched the agent in sweep 2. The A5 controls (§4) are therefore the main risk for the paper.
+Active selection still adds only ~+0.01 AUC over random, and a blind policy matched the agent in sweep 2. The A5 controls (§5) are therefore the main risk for the paper.
 
 **Not started:** ADNI preprocessing/QC/manifest/splits and token caches (data already on CSCS), AIBL transfer, 3D CNN encoder and baseline, static Top-K, differentiable selector, REINFORCE, GRU reader, cooperative two-agent RL, the Advocate–Challenger game, CIs/ECE/significance tests.
 
-### 1. Team and infrastructure
+### 1. Team, infrastructure and phases
 
-| Student | Access | Role |
-|---|---|---|
-| Anh lớn 1 | This server + CSCS | ADNI/AIBL data and NeuroVFM features |
-| Anh lớn 2 | This server + CSCS | RL and the evidence game |
-| Anh lớn 3 | This server + CSCS | Reader, baselines, evaluation and results |
-| Em bé 4 | **CSCS only** (via the GitHub repo) | 3D CNN (ResNet) backbone |
-
-Workflow: prototype and smoke-test on OASIS-3 on this server (24 GB RAM, at most 3 concurrent jobs), push to `NeuroVietCH/NeuRL`, run all ADNI/AIBL experiments on CSCS. **Every ADNI/AIBL number in the paper comes from CSCS.**
-
-### 2. Main responsibilities
-
-| Student | Assigned tasks | Due | Deliverables |
-|---|---|---|---|
-| Anh lớn 1 | 1. ADNI1/2/3 manifest (CN vs AD only), cross-phase subject mapping, phase-aware splits: P1 = held-out ADNI test, P2 = train ADNI1/2 → test ADNI3. No subject in more than one partition. | 24 Oct | Manifest, split files, `dataset_audit.md`, G2 memo, NeuroVFM ADNI/AIBL caches, full-volume NeuroVFM baseline, A10 and `g_free` caches, runtime/storage stats |
-| | 2. **G2 memo:** global vs local tokens, based on sweep 4. Write it in `stage2_notes.md`. | 23 Oct | |
-| | 3. NeuroVFM preprocessing (strict, unstripped, as in sweep 4) and QC on ADNI on CSCS. | 26 Oct | |
-| | 4. ADNI NeuroVFM token caches with `extract_tokens.py`, using the token mode from the G2 memo. **Critical path.** | 27 Oct | |
-| | 5. AIBL transfer, preprocessing and token cache. AIBL is never used for training or tuning. | 31 Oct | |
-| | 6. Give Em bé 4 the subject list, splits and preprocessed volumes; review Em bé 4's code and cache format. | ongoing | |
-| | 7. Full-volume NeuroVFM baseline (all-token probe) on ADNI. | 30 Oct | |
-| | 8. Caches for ablations A10 (local tokens, separate cache) and `g_free` (no global context). | 3 Nov | |
-| | 9. Runtime and storage statistics; validated data and encoder artifacts. | 9 Nov | |
-| Anh lớn 2 | 1. Decide **REINFORCE vs PPO**: implement REINFORCE, or write down why PPO stays. | 24 Oct | Single, cooperative and game policies; checkpoints; trajectory logs; game ablation tables |
-| | 2. Validation-calibrated confidence stopping, alongside the learned STOP. | 27 Oct | |
-| | 3. Single agent (A1) on ADNI with A5a/A5b controls, budgets 2/4/6/8. Verify and document exactly which inputs each control receives. | 27 Oct (G3) | |
-| | 4. Cooperative two-agent RL (A2): two simultaneous proposals per round, three rounds. | 29 Oct | |
-| | 5. **Advocate–Challenger game (A0):** conditional singleton evidence scores, role-specific payoffs, alternating updates. | 2 Nov (G4) | |
-| | 6. Game ablations in the priority order of §4: A5a/A5b on the game, A8, A3, A7, A6. | 6 Nov | |
-| | 7. Repeat A0/A1/A2 on CNN features once Em bé 4's cache passes checks (A9). | 6 Nov | |
-| | 8. Final checkpoints, game ablation tables, trajectory logs. | 9 Nov | |
-| Anh lớn 3 | 1. Decide **GRU vs Transformer reader**: switch, or record why the Transformer stays. | 24 Oct | Frozen readers, non-RL baselines, evaluation tooling, all tables and figures, reproducibility checks |
-| | 2. Train 5 cross-fitted readers per backbone/token mode on ADNI on CSCS (NeuroVFM first; CNN when its cache is ready; separate readers for A10 and `g_free`). | 28 Oct | |
-| | 3. **Static Top-K (A4)** and **differentiable sequential attention** baselines (develop on OASIS now). | 27 Oct | |
-| | 4. Random-k curves on ADNI (≥ 10 draws); subject-leakage and cache-integrity checks. | 28 Oct | |
-| | 5. Evaluation tooling: bootstrap CIs, paired bootstrap differences, ECE, one results registry, per-subject prediction CSV in the plan's format. | 31 Oct | |
-| | 6. P1, P2 cross-phase and AIBL external evaluation, 3 seeds for every main method. | 6 Nov | |
-| | 7. Tables 1–4 (incl. the paired A0 vs A2 table and the A9 encoder table), budget curves, trajectory figures, confusion matrices. | 9 Nov | |
-| | 8. Reproducibility: rerun selected runs, archive configs and checkpoints. | 9 Nov | |
-| Em bé 4 | 1. ResNet-18 3D encoder exposing its spatial feature map; unit-test output shapes. | 25 Oct | ResNet encoder, full-volume CNN baseline, CNN feature caches, cache-check script, runtime profile |
-| | 2. Full-volume CNN baseline for CN vs AD on Anh lớn 1's ADNI splits, 3 seeds. | 29 Oct | |
-| | 3. CNN spatial-feature cache for ADNI and AIBL. **Use the same record format as the NeuroVFM cache** (`src/neuro_evidence/extract_tokens.py`, `to_cache`): `embeddings` (fp16, N×D), `coords` (int16), `token_count`, `embedding_dim`, `grid_shape`, `scan_path`, `metadata`. Then the environment and reader run unchanged. | 30 Oct | |
-| | 4. Cache sanity script: NaN/Inf, wrong shapes, missing and duplicate subjects. Run it on both backbones' caches. | 31 Oct | |
-| | 5. CNN runtime and memory profile. | 6 Nov | |
-
-### 3. Deadlines and milestones
-
-| Deadline | Anh lớn 1 | Anh lớn 2 | Anh lớn 3 | Em bé 4 |
+| Student | Name | Access | Phase 1 (22–30 Oct) | Phase 2 (31 Oct–6 Nov) |
 |---|---|---|---|---|
-| 24 Oct | ADNI manifest and splits; G2 memo | REINFORCE vs PPO decision | GRU vs Transformer decision | — |
-| 27 Oct (G3) | ADNI NeuroVFM token cache | Single agent + A5a/A5b on ADNI | Static Top-K, differentiable baseline | ResNet encoder (25 Oct) |
-| 31 Oct | AIBL cache; full-volume NeuroVFM baseline | Cooperative two-agent (29 Oct) | Readers trained; eval tooling | CNN baseline, CNN cache, cache checks |
-| 2 Nov (G4) | A10 / `g_free` caches (3 Nov) | **A0 game vs A2 cooperative** | Matched A0 vs A2 comparison | — |
-| 6 Nov (G5) | Runtime/storage stats | Game ablations done; CNN runs | P1/P2/AIBL eval, 3 seeds, stats | CNN runtime profile |
-| 9 Nov | Validated data and encoder artifacts | Final checkpoints, ablation tables | All tables, figures, per-subject predictions | — |
+| Anh lớn 1 | **Long** | This server + CSCS | Encoder team: data + NeuroVFM | Training: NeuroVFM ablations, AIBL |
+| Anh lớn 2 | **Vượng** | This server + CSCS | Architecture: RL and the game | Training: main game runs (A0/A1/A2) |
+| Anh lớn 3 | **Duy** | This server + CSCS | Architecture: reader, baselines, evaluation | Training: baselines, evaluation, statistics |
+| Em bé 4 | **Hưng** | **CSCS only** (via the GitHub repo) | Encoder team: ResNet CNN | Training: CNN backbone runs (A9) |
+
+- **Phase 1, two parallel teams.** The **encoder team** (Long + Hưng) builds every feature cache on CSCS as fast as possible; it is the head of the critical path. The **architecture team** (Vượng + Duy) builds and tests all method code on OASIS-3 on this server (24 GB RAM, at most 3 concurrent jobs).
+- **Handoff (30 Oct).** Architecture freeze: Vượng and Duy hand over code, configs and CSCS launch scripts for the whole experiment matrix.
+- **Phase 2, everyone trains on CSCS.** Every ADNI/AIBL number in the paper comes from CSCS.
+
+### 2. Phase 1 tasks (22–30 Oct)
+
+#### Encoder team: Long + Hưng (CSCS)
+
+| ID | Task | Owner | Depends on | Due |
+|---|---|---|---|---|
+| E1 | ADNI1/2/3 manifest (CN vs AD only), cross-phase subject mapping, phase-aware splits: P1 = held-out ADNI test, P2 = train ADNI1/2 → test ADNI3. No subject in more than one partition. `dataset_audit.md`. | Long | — | 24 Oct |
+| E2 | **G2 memo:** global vs local tokens, based on sweep 4. Write it in `stage2_notes.md`. | Long | — | 23 Oct |
+| E3 | NeuroVFM preprocessing (strict, unstripped, as in sweep 4) and QC on ADNI. Can start on the scan list before the splits are final. | Long | scan list from E1 | 26 Oct |
+| E4 | ADNI NeuroVFM token caches with `extract_tokens.py`. **Critical path.** | Long | E2, E3 | 27 Oct |
+| E5 | Start the AIBL transfer now; then preprocessing and token cache. AIBL is never used for training or tuning. | Long | — (cache: E2) | 31 Oct |
+| E6 | Full-volume NeuroVFM baseline (all-token probe) on ADNI. | Long | E1, E4 | 30 Oct |
+| H1 | ResNet-18 3D encoder exposing its spatial feature map; unit-test output shapes. | Hưng | — | 25 Oct |
+| H2 | Cache sanity script (NaN/Inf, wrong shapes, missing and duplicate subjects). Write it first so it validates Long's ADNI cache on 27 Oct. | Hưng | — | 26 Oct |
+| H3 | CNN preprocessing on the same ADNI scans (reuse Long's pipeline outputs where possible). | Hưng (Long reviews) | E1 | 27 Oct |
+| H4 | Full-volume CNN baseline for CN vs AD on the E1 splits, 3 seeds. | Hưng | H1, H3, E1 | 29 Oct |
+| H5 | CNN spatial-feature cache for ADNI and AIBL. **Same record format as the NeuroVFM cache** (`src/neuro_evidence/extract_tokens.py`, `to_cache`): `embeddings` (fp16, N×D), `coords` (int16), `token_count`, `embedding_dim`, `grid_shape`, `scan_path`, `metadata`. Then the environment and reader run unchanged. | Hưng | H4 (AIBL part: E5) | 30 Oct |
+
+How the pair works: Long reviews Hưng's code and the cache format; Hưng's check script (H2) validates Long's caches. If Long's NeuroVFM chain (E3→E4) slips, Hưng helps run extraction shards on CSCS.
+
+#### Architecture team: Vượng + Duy (this server, OASIS-3 pilot)
+
+| ID | Task | Owner | Depends on | Due |
+|---|---|---|---|---|
+| V1 | Decide **REINFORCE vs PPO**: implement REINFORCE, or write down why PPO stays. | Vượng | — | 24 Oct |
+| V2 | Audit and document exactly which inputs the sweep 2 blind and sweep 3 `content: false` policies receive; fix them to match the A5a/A5b definitions. | Vượng | — | 24 Oct |
+| V3 | Validation-calibrated confidence stopping, alongside the learned STOP. | Vượng | — | 27 Oct |
+| V4 | Cooperative two-agent RL (A2): two simultaneous proposals per round, three rounds. | Vượng | V1 | 28 Oct |
+| V5 | **Advocate–Challenger game (A0):** conditional singleton evidence scores, role-specific payoffs, alternating updates. | Vượng | V4 | 30 Oct |
+| V6 | All game ablations as config switches: A3, A5a/A5b on the game, A6, A7, A8. Smoke-test each on OASIS. | Vượng | V2, V3, V5 | 30 Oct |
+| D1 | Decide **GRU vs Transformer reader**: switch, or record why the Transformer stays. | Duy | — | 24 Oct |
+| D2 | **Static Top-K (A4)** and **differentiable sequential attention** baselines. | Duy | — | 27 Oct |
+| D3 | Evaluation tooling: bootstrap CIs, paired bootstrap differences, ECE, one results registry, per-subject prediction CSV in the plan's format. | Duy | — | 29 Oct |
+| D4 | Train the 5 cross-fitted ADNI NeuroVFM readers on CSCS, plus random-k curves (≥ 10 draws) and leakage/cache-integrity checks. **Bridge task: starts the moment E4 passes H2.** | Duy | D1, E1, E4, H2 | 28 Oct |
+| D5 | Experiment-matrix configs and CSCS launch scripts (methods × budgets 2/4/6/8 × seeds × backbones); results-registry hook in every run. | Duy (Vượng for RL configs) | D3, V6 | 30 Oct |
+
+**G3 (27 Oct) is checked on the OASIS pilot:** single agent vs static Top-K with A5a/A5b, budgets 2/4/6/8. The ADNI version runs in phase 2. *(Change from the plan, which puts G3 on ADNI — tell the prof.)*
+
+### 3. Phase 2 tasks (31 Oct–6 Nov): training on CSCS, all four
+
+| Owner | Runs | Depends on | Due |
+|---|---|---|---|
+| Vượng | Single agent (A1), cooperative (A2) and game (A0) on NeuroVFM, with A5a/A5b; **paired A0 vs A2** | D4, V6, D5 | 2 Nov (G4) |
+| Duy | Random, static Top-K, differentiable baseline on ADNI; P1, P2 cross-phase and AIBL evaluation of all frozen models; CIs and significance | D4, D5, E5 | 6 Nov |
+| Long | NeuroVFM ablations in priority order: A8, A3, A7, then A6; A10 and `g_free` caches + readers (with Duy's reader config) | D5, G4 result | 6 Nov |
+| Hưng | CNN readers (Duy's config), then A0/A1/A2 and A4 on CNN features (A9); seed repeats | H5, D5 | 6 Nov |
+| All | Three seeds for every main-table method | — | 6 Nov |
+
+After G5 (6 Nov) the main method is frozen: only reproduction, cross-cohort tests, figures and statistics.
+
+| Deadline | Long | Vượng | Duy | Hưng |
+|---|---|---|---|---|
+| 7–9 Nov | Validated data and encoder artifacts; runtime/storage stats | Final checkpoints, game ablation tables, trajectory logs | Tables 1–4, budget curves, trajectory figures, per-subject predictions | CNN runtime profile; reproduce selected runs |
 | 10–16 Nov | Reproduce or correct results as requested | same | Final paper-result verification | same |
 
-After G5 (6 Nov) the main method is frozen: no changes to the method, only reproduction, cross-cohort tests, figures and statistics.
+### 4. Dependencies and parallel work
 
-### 4. Ablations (plan §11)
+```mermaid
+flowchart LR
+  subgraph ENC["Encoder team (Long + Hưng)"]
+    E1[E1 manifest + splits] --> E3[E3 NeuroVFM preprocess/QC]
+    E2[E2 G2 memo] --> E4
+    E3 --> E4[E4 ADNI NeuroVFM cache]
+    E4 --> E6[E6 full-volume NeuroVFM]
+    E5[E5 AIBL transfer + cache]
+    H1[H1 ResNet encoder] --> H4[H4 CNN baseline]
+    E1 --> H3[H3 CNN preprocess] --> H4 --> H5[H5 CNN cache]
+    H2[H2 cache checks]
+  end
+  subgraph ARCH["Architecture team (Vượng + Duy)"]
+    V1[V1 REINFORCE/PPO] --> V4[V4 cooperative A2] --> V5[V5 game A0] --> V6[V6 ablation switches]
+    V2[V2 A5 input audit] --> V6
+    V3[V3 conf. stopping] --> V6
+    D1[D1 GRU/Transformer] --> D4
+    D2[D2 Top-K + diff. selector]
+    D3[D3 eval tooling] --> D5[D5 matrix configs]
+    V6 --> D5
+  end
+  E4 --> D4[D4 ADNI readers]
+  H2 --> D4
+  D4 --> T1[Phase 2: NeuroVFM runs A0/A1/A2/A4 + ablations]
+  D5 --> T1
+  H5 --> T2[Phase 2: CNN runs, A9]
+  D5 --> T2
+  E5 --> T3[P1/P2/AIBL evaluation]
+  T1 --> T3
+  T2 --> T3
+  T3 --> R[Tables + results package, 9 Nov]
+```
+
+**Critical path:** E1 → E3 → E4 → D4 → A0 vs A2 on ADNI (G4, 2 Nov) → ablations and 3 seeds (G5, 6 Nov) → tables (9 Nov). Every day lost on the encoder chain is a day lost at the end. The game code (V1 → V4 → V5) must be ready by the time the readers are (28–30 Oct); it is the second-longest chain.
+
+**Independent, can start today in parallel (no inputs needed):** E1, E2, E5 (AIBL transfer), H1, H2, V1, V2, V3, D1, D2, D3. Eleven tasks, so all four people are busy from day one.
+
+**Parallel but waiting on one input:**
+- E3 needs only the scan list from E1, not the final splits.
+- H3 and H4 need E1; the CNN chain (H1 → H4 → H5) runs alongside the NeuroVFM chain and does not block the main paper.
+- V4 needs V1; D4 needs E4 and H2.
+
+**Join points (several inputs must all be ready):**
+- D4 (ADNI readers): E1 + E4 + D1 + H2.
+- D5 (matrix configs): D3 + V6.
+- Phase 2 NeuroVFM runs: D4 + D5. Phase 2 CNN runs: H5 + D5.
+- Final evaluation: all phase 2 runs + E5 (AIBL).
+
+**Fallbacks:**
+- If the CNN cache (H5) is not ready by 31 Oct, the main paper is NeuroVFM-only and A9 moves to the supplementary. Hưng then joins the NeuroVFM seed repeats.
+- If the ADNI NeuroVFM cache (E4) slips past 28 Oct, G4 and G5 are at risk: report it immediately; Vượng and Duy keep developing on OASIS meanwhile.
+
+### 5. Ablations (plan §11)
 
 All comparisons within an encoder/token-mode setting use the same split, cache, frozen reader ensemble, proposal budget and evaluation rule. Every ablation table reports dataset, backbone, token mode, budget, AUROC, balanced accuracy and unique observed tokens. **The central game result is the paired A0 vs A2 table.**
 
-| Priority | ID | Ablation | Exact change | Owner | OASIS pilot status |
-|---|---|---|---|---|---|
-| 1 | A0 | Full TRACE-MRI | Two-policy conditional evidence game | Anh lớn 2 | Not started |
-| 1 | A2 | Cooperative game | `alpha = 0`; keep two policies and collision term | Anh lớn 2 | Not started |
-| 1 | A1 | Single agent | One policy proposes both tokens; common reward | Anh lớn 2 | Done (PPO, sweeps 1–4) |
-| 1 | A4 | Static selection | Rank tokens once from context and coordinates | Anh lớn 3 | Not started |
-| 2 | A5a | Evidence-blind policy | Policy loses evidence-dependent state; reader unchanged | Anh lớn 2 | Done for single agent (sweep 2); inputs to be verified |
-| 2 | A5b | Geometry-only policy | Also remove scan-specific diagnostic context; keep coordinates and mask | Anh lớn 2 | ≈ `content: false` (sweep 3); inputs to be verified |
-| 2 | A9 | Encoder | CNN vs NeuroVFM, same method | Anh lớn 3 (Em bé 4, Anh lớn 2) | Blocked on CNN cache |
-| 3 | A8 | Reward coefficient | `alpha` = 0, .05, .10, .20 | Anh lớn 2 | Not started |
-| 3 | A3 | No collision term | `collision_weight = 0` | Anh lớn 2 | Not started |
-| 3 | A7 | Role direction | Swap support/challenge signs, or same sign for both | Anh lớn 2 | Not started |
-| 4 (suppl.) | A6 | Fixed vs adaptive budget | Fixed budgets vs validation-calibrated stopping | Anh lớn 2 | Learned STOP tested (sweep 2) |
-| 4 (suppl.) | A10 | Context vs local tokens | Separate caches and readers | Anh lớn 1 + Anh lớn 3 | rawG vs rawL (sweep 4) |
-| 4 (suppl.) | `g_free` | No global context | Learned constant $h_0$; $g$ removed from reader and policy; separate reader | Anh lớn 1 + Anh lớn 3 | Not started |
-| 4 (suppl.) | — | Guarded joint reader updates | Report only as an ablation | Anh lớn 2 | Done (sweeps 2–3) |
-| 4 (suppl.) | — | 64-cell grid vs native tokens | Optional granularity ablation | Anh lớn 1 | Not started |
+| Priority | ID | Ablation | Exact change | Code (phase 1) | Runs (phase 2) | OASIS pilot status |
+|---|---|---|---|---|---|---|
+| 1 | A0 | Full TRACE-MRI | Two-policy conditional evidence game | Vượng | Vượng | Not started |
+| 1 | A2 | Cooperative game | `alpha = 0`; keep two policies and collision term | Vượng | Vượng | Not started |
+| 1 | A1 | Single agent | One policy proposes both tokens; common reward | Vượng | Vượng | Done (PPO, sweeps 1–4) |
+| 1 | A4 | Static selection | Rank tokens once from context and coordinates | Duy | Duy | Not started |
+| 2 | A5a | Evidence-blind policy | Policy loses evidence-dependent state; reader unchanged | Vượng | Vượng | Done for single agent (sweep 2); inputs to be verified (V2) |
+| 2 | A5b | Geometry-only policy | Also remove scan-specific diagnostic context; keep coordinates and mask | Vượng | Vượng | ≈ `content: false` (sweep 3); inputs to be verified (V2) |
+| 2 | A9 | Encoder | CNN vs NeuroVFM, same method | Hưng (cache) | Hưng; table: Duy | Blocked on CNN cache |
+| 3 | A8 | Reward coefficient | `alpha` = 0, .05, .10, .20 | Vượng | Long | Not started |
+| 3 | A3 | No collision term | `collision_weight = 0` | Vượng | Long | Not started |
+| 3 | A7 | Role direction | Swap support/challenge signs, or same sign for both | Vượng | Long | Not started |
+| 4 (suppl.) | A6 | Fixed vs adaptive budget | Fixed budgets vs validation-calibrated stopping | Vượng | Long | Learned STOP tested (sweep 2) |
+| 4 (suppl.) | A10 | Context vs local tokens | Separate caches and readers | Long | Long | rawG vs rawL (sweep 4) |
+| 4 (suppl.) | `g_free` | No global context | Learned constant $h_0$; $g$ removed from reader and policy; separate reader | Long + Duy | Long | Not started |
+| 4 (suppl.) | — | Guarded joint reader updates | Report only as an ablation | — | — | Done (sweeps 2–3) |
+| 4 (suppl.) | — | 64-cell grid vs native tokens | Optional granularity ablation | Long | Long | Not started |
 
 Rules:
 - A5a and A5b run on **both** the single agent and the game (A0). They are the main risk: on OASIS the blind policy matched the full agent.
-- A control that still receives scan-dependent global context or coordinates is not blind. Before reusing the sweep 2 / sweep 3 controls as A5a/A5b, document exactly which inputs each policy received.
+- A control that still receives scan-dependent global context or coordinates is not blind. Before reusing the sweep 2 / sweep 3 controls as A5a/A5b, document exactly which inputs each policy received (V2).
 - Keep the reader unchanged for A5a and A5b.
-- **Open question for the prof:** the plan lists a "memory" game ablation (§ checklist) with no row in §11. Confirm what it should be.
+- **Open question for the prof:** the plan lists a "memory" game ablation in its final checklist but has no row for it in §11. Confirm what it should be.
 
-Compute estimate: A0–A3, A5a/b, A7 and A8 on both backbones with 3 seeds ≈ 54 policy training runs before budget sweeps — CSCS only. If time runs short, finish priorities 1–2 for the main paper and move priority 4 to the supplementary.
-
-### 5. Coordination and dependencies
-
-- **Anh lớn 1 → everyone.** The ADNI NeuroVFM cache (27 Oct) blocks every ADNI result. If it slips past 28 Oct, G4 and G5 are at risk. Until then, Anh lớn 2 and Anh lớn 3 keep developing on OASIS.
-- **Anh lớn 3 → Anh lớn 2.** Readers are trained and frozen before any ADNI policy training.
-- **Anh lớn 2 → Anh lớn 3.** RL code, checkpoints, eval configs and trajectory logs; Anh lớn 3 owns the evaluation protocol and tables.
-- **Em bé 4 → Anh lớn 2, Anh lớn 3.** CNN cache in the shared format. Anh lớn 1 reviews Em bé 4's code. **Fallback:** if the CNN cache is not ready by 31 Oct, the main paper is NeuroVFM-only and A9 moves to the supplementary. No critical-path item depends only on Em bé 4.
-- **Decisions this week** (token mode, REINFORCE vs PPO, GRU vs Transformer) are written up with a reason; the plan requires methodological changes to be reported.
+Compute estimate: A0–A3, A5a/b, A7 and A8 on both backbones with 3 seeds ≈ 54 policy training runs before budget sweeps — CSCS only, shared queue. If time runs short, finish priorities 1–2 for the main paper and move priority 4 to the supplementary.
 
 ### 6. Working rules
 
 All four students use one repository and a shared CSCS experiment directory. MRI transfers use the approved storage location and comply with ADNI/AIBL data-access agreements.
 
 Every experiment saves its configuration, random seed, subject split, checkpoint, predictions and evaluation metrics, and is entered in the single results registry. Each method is evaluated at budgets 2, 4, 6 and 8. Final results need three independent seeds, subject-level separation, and AIBL evaluation without retraining or tuning on AIBL.
+
+Decisions this week (token mode E2, REINFORCE vs PPO V1, GRU vs Transformer D1) are written up with a reason; the plan requires methodological changes to be reported.
 
 The paper is written by the supervisor. Send the results package by **9 November**: final tables, figures, experimental settings and concise technical descriptions of what was implemented. Report any unexpected result, suspected data leakage or methodological change immediately, with the affected configuration and run IDs.
