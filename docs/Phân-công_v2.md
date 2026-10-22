@@ -28,7 +28,9 @@ Active selection still adds only ~+0.01 AUC over random, and a blind policy matc
 | Anh lớn 3 | **Duy** | This server + CSCS | Architecture: reader, baselines, evaluation | Training: baselines, evaluation, statistics |
 | Em bé 4 | **Hưng** | **CSCS only** (via the GitHub repo) | Encoder team: ResNet CNN | Training: CNN backbone runs (A9) |
 
-- **Phase 1, two parallel teams.** The **encoder team** (Long + Hưng) builds every feature cache on CSCS as fast as possible; it is the head of the critical path. The **architecture team** (Vượng + Duy) builds and tests all method code on OASIS-3 on this server (24 GB RAM, at most 3 concurrent jobs).
+**ADNI is the main dataset; AIBL is the external test. OASIS-3 is only for testing code** (unit tests, smoke tests, debugging on this server). No OASIS number goes into the paper's results, and no design, token-mode or hyperparameter decision is final until it is confirmed on ADNI validation subjects.
+
+- **Phase 1, two parallel teams.** The **encoder team** (Long + Hưng) builds every ADNI/AIBL feature cache on CSCS as fast as possible; it is the head of the critical path. A small ADNI development subset (E4a) comes first so that all method work moves to ADNI early. The **architecture team** (Vượng + Duy) writes code and smoke-tests it on OASIS-3 on this server (24 GB RAM, at most 3 concurrent jobs), then validates it on the ADNI development subset on CSCS.
 - **Handoff (30 Oct).** Architecture freeze: Vượng and Duy hand over code, configs and CSCS launch scripts for the whole experiment matrix.
 - **Phase 2, everyone trains on CSCS.** Every ADNI/AIBL number in the paper comes from CSCS.
 
@@ -39,9 +41,10 @@ Active selection still adds only ~+0.01 AUC over random, and a blind policy matc
 | ID | Task | Owner | Depends on | Due |
 |---|---|---|---|---|
 | E1 | ADNI1/2/3 manifest (CN vs AD only), cross-phase subject mapping, phase-aware splits: P1 = held-out ADNI test, P2 = train ADNI1/2 → test ADNI3. No subject in more than one partition. `dataset_audit.md`. | Long | — | 24 Oct |
-| E2 | **G2 memo:** global vs local tokens, based on sweep 4. Write it in `stage2_notes.md`. | Long | — | 23 Oct |
+| E2 | **G2 memo:** global vs local tokens. Sweep 4 (OASIS) gives the provisional choice; confirm it on the ADNI development subset (random-k ≥ 10 draws, spatial variation in single-token AUC, token counts) and write it in `stage2_notes.md`. | Long (Duy runs the ADNI checks) | E4a | provisional 23 Oct; confirmed 26 Oct |
 | E3 | NeuroVFM preprocessing (strict, unstripped, as in sweep 4) and QC on ADNI. Can start on the scan list before the splits are final. | Long | scan list from E1 | 26 Oct |
-| E4 | ADNI NeuroVFM token caches with `extract_tokens.py`. **Critical path.** | Long | E2, E3 | 27 Oct |
+| E4a | **ADNI development subset:** preprocess and extract both global and local tokens for a stratified subset (~300 training/validation scans, balanced CN/AD, all phases, no test subjects). Lets the architecture team work on ADNI from 25 Oct. | Long | E1 | 25 Oct |
+| E4 | Full ADNI NeuroVFM token caches with `extract_tokens.py`, in the confirmed token mode. **Critical path.** | Long | E2, E3 | 27 Oct |
 | E5 | Start the AIBL transfer now; then preprocessing and token cache. AIBL is never used for training or tuning. | Long | — (cache: E2) | 31 Oct |
 | E6 | Full-volume NeuroVFM baseline (all-token probe) on ADNI. | Long | E1, E4 | 30 Oct |
 | H1 | ResNet-18 3D encoder exposing its spatial feature map; unit-test output shapes. | Hưng | — | 25 Oct |
@@ -52,7 +55,9 @@ Active selection still adds only ~+0.01 AUC over random, and a blind policy matc
 
 How the pair works: Long reviews Hưng's code and the cache format; Hưng's check script (H2) validates Long's caches. If Long's NeuroVFM chain (E3→E4) slips, Hưng helps run extraction shards on CSCS.
 
-#### Architecture team: Vượng + Duy (this server, OASIS-3 pilot)
+#### Architecture team: Vượng + Duy (code and smoke tests on OASIS-3 here; validation on the ADNI subset on CSCS)
+
+Every task below is "done" only after it runs on the ADNI development subset (E4a) on CSCS, not just on OASIS.
 
 | ID | Task | Owner | Depends on | Due |
 |---|---|---|---|---|
@@ -68,7 +73,7 @@ How the pair works: Long reviews Hưng's code and the cache format; Hưng's chec
 | D4 | Train the 5 cross-fitted ADNI NeuroVFM readers on CSCS, plus random-k curves (≥ 10 draws) and leakage/cache-integrity checks. **Bridge task: starts the moment E4 passes H2.** | Duy | D1, E1, E4, H2 | 28 Oct |
 | D5 | Experiment-matrix configs and CSCS launch scripts (methods × budgets 2/4/6/8 × seeds × backbones); results-registry hook in every run. | Duy (Vượng for RL configs) | D3, V6 | 30 Oct |
 
-**G3 (27 Oct) is checked on the OASIS pilot:** single agent vs static Top-K with A5a/A5b, budgets 2/4/6/8. The ADNI version runs in phase 2. *(Change from the plan, which puts G3 on ADNI — tell the prof.)*
+**G3 is checked on ADNI:** single agent vs static Top-K with A5a/A5b, budgets 2/4/6/8, on ADNI validation subjects. A first check runs on the development subset (E4a) on 27 Oct; the full check runs once the ADNI readers (D4) are trained, by 29 Oct. *(Two days later than the plan's 27 Oct — tell the prof.)*
 
 ### 3. Phase 2 tasks (31 Oct–6 Nov): training on CSCS, all four
 
@@ -93,7 +98,7 @@ After G5 (6 Nov) the main method is frozen: only reproduction, cross-cohort test
 flowchart LR
   subgraph ENC["Encoder team (Long + Hưng)"]
     E1[E1 manifest + splits] --> E3[E3 NeuroVFM preprocess/QC]
-    E2[E2 G2 memo] --> E4
+    E1 --> E4a[E4a ADNI dev subset] --> E2[E2 G2 memo, confirmed on ADNI] --> E4
     E3 --> E4[E4 ADNI NeuroVFM cache]
     E4 --> E6[E6 full-volume NeuroVFM]
     E5[E5 AIBL transfer + cache]
@@ -110,6 +115,8 @@ flowchart LR
     D3[D3 eval tooling] --> D5[D5 matrix configs]
     V6 --> D5
   end
+  E4a -.ADNI validation of V*/D* code.-> V6
+  E4a -.-> D2
   E4 --> D4[D4 ADNI readers]
   H2 --> D4
   D4 --> T1[Phase 2: NeuroVFM runs A0/A1/A2/A4 + ablations]
@@ -122,12 +129,13 @@ flowchart LR
   T3 --> R[Tables + results package, 9 Nov]
 ```
 
-**Critical path:** E1 → E3 → E4 → D4 → A0 vs A2 on ADNI (G4, 2 Nov) → ablations and 3 seeds (G5, 6 Nov) → tables (9 Nov). Every day lost on the encoder chain is a day lost at the end. The game code (V1 → V4 → V5) must be ready by the time the readers are (28–30 Oct); it is the second-longest chain.
+**Critical path:** E1 → E4a (dev subset) → E2 confirmed → E4 → D4 → A0 vs A2 on ADNI (G4, 2 Nov) → ablations and 3 seeds (G5, 6 Nov) → tables (9 Nov). Every day lost on the encoder chain is a day lost at the end. The game code (V1 → V4 → V5) must be ready by the time the readers are (28–30 Oct); it is the second-longest chain.
 
-**Independent, can start today in parallel (no inputs needed):** E1, E2, E5 (AIBL transfer), H1, H2, V1, V2, V3, D1, D2, D3. Eleven tasks, so all four people are busy from day one.
+**Independent, can start today in parallel (no inputs needed):** E1, E2 (provisional), E5 (AIBL transfer), H1, H2, V1, V2, V3, D1, D2, D3. Eleven tasks, so all four people are busy from day one. The architecture tasks start as code on OASIS and must then pass on the ADNI subset (E4a, 25 Oct).
 
 **Parallel but waiting on one input:**
-- E3 needs only the scan list from E1, not the final splits.
+- E3 and E4a need only the scan list from E1, not the final splits.
+- The confirmed token mode (E2) needs E4a.
 - H3 and H4 need E1; the CNN chain (H1 → H4 → H5) runs alongside the NeuroVFM chain and does not block the main paper.
 - V4 needs V1; D4 needs E4 and H2.
 
@@ -144,6 +152,8 @@ flowchart LR
 ### 5. Ablations (plan §11)
 
 All comparisons within an encoder/token-mode setting use the same split, cache, frozen reader ensemble, proposal budget and evaluation rule. Every ablation table reports dataset, backbone, token mode, budget, AUROC, balanced accuracy and unique observed tokens. **The central game result is the paired A0 vs A2 table.**
+
+All ablation results in the paper are on ADNI (and AIBL for the external test). The last column only records what has been smoke-tested on OASIS.
 
 | Priority | ID | Ablation | Exact change | Code (phase 1) | Runs (phase 2) | OASIS pilot status |
 |---|---|---|---|---|---|---|
