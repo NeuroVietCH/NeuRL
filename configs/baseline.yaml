@@ -25,7 +25,7 @@ neurovfm:
 # `prep` is a Python port of its register_t1w.sh (SimpleITK N4 + affine, HD-BET for SynthStrip).
 neurojepa:
   repo: ext/neurojepa                               # git clone https://github.com/NYUMedML/Neuro-JEPA
-  checkpoint: checkpoints/hf/NYUMedML/Neuro-JEPA-Large  # gated HF repo: config.json + model.safetensors
+  checkpoint: /mnt/shared/datasets/hf_models/NYUMedML/Neuro-JEPA-Large  # gated HF repo: config.json + model.safetensors
   template: checkpoints/templates/tpl-MNI152NLin6Asym_res-01_T1w.nii.gz  # = FSL MNI152_T1_1mm grid
   template_mask: checkpoints/templates/tpl-MNI152NLin6Asym_res-01_desc-brain_mask.nii.gz
   fov_mm: 170.0          # robustfov default: keep 170 mm below the top of the head

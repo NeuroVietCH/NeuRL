@@ -8,7 +8,7 @@ FSL/ANTs/FreeSurfer are not installed here, so `prep` is a Python port of those 
   (FSL's MNI152_T1_1mm grid, 182x218x182) -> B-spline resample -> HD-BET skull strip (pixels zeroed).
 `extract` then applies Neuro-JEPA's own MONAI transforms (RAS, 0.5-99.5 pct scaling, pad/crop
 180x216x180, foreground crop, resize 100x120x100, centre crop 96x108x96) and the ViT backbone:
-576 tokens (8x9x8 grid of 12^3 patches, C order over RAS x,y,z) x 768 dims.
+576 tokens (8x9x8 grid of 12^3 patches, C order over RAS x,y,z) x 1024 dims (ViT-Large).
 
   cd src && python -m neuro_evidence.neurojepa prep    --shard 0 --num-shards 4
   cd src && python -m neuro_evidence.neurojepa extract --shard 0 --num-shards 1
