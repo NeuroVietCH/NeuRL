@@ -20,6 +20,22 @@ neurovfm:
   # next to the scan (preprocess.skull_strip.method: hdbet). null = NeuroVFM's rule only.
   min_brain_fraction: null
 
+# Second encoder: Neuro-JEPA-Large (python -m neuro_evidence.neurojepa prep|extract, run from src/).
+# Unlike NeuroVFM it needs MNI152-registered, N4-corrected, skull-stripped T1s (see its README);
+# `prep` is a Python port of its register_t1w.sh (SimpleITK N4 + affine, HD-BET for SynthStrip).
+neurojepa:
+  repo: ext/neurojepa                               # git clone https://github.com/NYUMedML/Neuro-JEPA
+  checkpoint: /mnt/shared/datasets/hf_models/NYUMedML/Neuro-JEPA-Large  # gated HF repo: config.json + model.safetensors
+  template: checkpoints/templates/tpl-MNI152NLin6Asym_res-01_T1w.nii.gz  # = FSL MNI152_T1_1mm grid
+  template_mask: checkpoints/templates/tpl-MNI152NLin6Asym_res-01_desc-brain_mask.nii.gz
+  fov_mm: 170.0          # robustfov default: keep 170 mm below the top of the head
+  device: cuda
+  use_amp: true
+  img_size: [96, 108, 96]
+  patch_size: [12, 12, 12]
+  mni_dir: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/neurojepa_mni
+  token_dir: /mnt/shared/datasets/NeuRL-dataset/oasis/processed/neurojepa_tokens_mni
+
 # MRI preparation before NeuroVFM (python -m neuro_evidence.preprocess, run from src/).
 # Input: NIfTI or a DICOM series directory. Default = strict NeuroVFM pipeline: the scan is written
 # unchanged (DICOM -> NIfTI) and NeuroVFM does reorientation, 1x1x4mm resampling (4mm along the
