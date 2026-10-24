@@ -59,6 +59,51 @@ def build_token_manifest(
     return df
 
 
+SCAN_TABLE_COLUMNS = ("sample_id", "subject_id", "label", "fold", "split")
+
+
+def load_scan_table(
+    scan_table: str | Path,
+    token_dir: str | Path | None,
+    fold: int = 0,
+    split: str | None = None,
+) -> pd.DataFrame:
+    """Rows of a dataset-agnostic scan table that have a cached token file.
+
+    The table has one row per (scan, fold) with columns `sample_id`, `subject_id`, `label`
+    (0 = CN, 1 = AD), `fold`, `split` (`train`, `test`, optionally `val`), and either `token_path`
+    (absolute) or `token_file` (relative to `token_dir`, so one table serves every encoder whose
+    cache uses the same file names). Optional: `class_name`, `volume_path`, `mask_path`.
+    Returned columns follow `build_token_manifest`, so `load_split_samples` works unchanged.
+    """
+    df = pd.read_csv(scan_table)
+    missing = [c for c in SCAN_TABLE_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"{scan_table} lacks columns {missing}; see docs/baselines.md")
+    df = df[df["fold"] == fold].copy()
+    if split is not None:
+        df = df[df["split"] == split].copy()
+    if "token_path" not in df.columns:
+        if "token_file" not in df.columns or token_dir is None:
+            raise ValueError(f"{scan_table} needs `token_path`, or `token_file` plus a token_dir")
+        df["token_path"] = [Path(token_dir) / f for f in df["token_file"]]
+    df["token_path"] = df["token_path"].map(Path)
+    df["session_id"], df["patient_id"] = df["sample_id"].astype(str), df["subject_id"].astype(str)
+    if "class_name" not in df.columns:
+        df["class_name"] = df["label"].map({0: "cn", 1: "ad"})
+    for col in ("volume_path", "mask_path"):
+        if col not in df.columns:
+            df[col] = None
+    return df[df["token_path"].map(Path.exists)].copy()
+
+
+def token_manifest(cfg: dict[str, Any], fold: int = 0, split: str | None = None) -> pd.DataFrame:
+    """Scans of one fold/split for a run config: its `scan_table` if set, else the OASIS fold CSV."""
+    if cfg.get("scan_table"):
+        return load_scan_table(cfg["scan_table"], cfg.get("token_dir"), fold=fold, split=split)
+    return build_token_manifest(cfg["folds_csv"], cfg["token_dir"], cfg["metadata_csv"], fold=fold, split=split, data_root=cfg.get("data_root"))
+
+
 def load_token_sample(row: pd.Series | dict[str, Any]) -> dict[str, Any]:
     enc = CachedTokenEncoder()
     data = enc.load(row["token_path"])

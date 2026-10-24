@@ -2,13 +2,14 @@
 # Reference for comparing the new TRACE-MRI architecture. Differences from pointer_agent.yaml (sweep 4):
 #   seeds 0,1,2 (plan: consecutive from 0), 3 cross-fitted readers frozen during PPO (plan: no joint updates),
 #   best.pt by val AUC at the run's budget (plan: validation AUROC), budgets 4/6/8, unstripped local-window tokens.
-# Launch: scripts/run_standard_baseline.sh (readers pretrained once per fold/seed at b4, reused for b6/b8).
+# Launch: scripts/run_baseline.py --dataset <ds> --encoder <enc> (registry: configs/baselines.yaml; docs/baselines.md).
+# Per fold/seed the readers are pretrained at budget 4 and reused for budgets 6 and 8.
 # Results: docs/stage2_notes.md "Standard baseline".
 # Tokens: unstripped OASIS-3 NeuroVFM tokens (extract_tokens), copied from oasis/processed/ to data/oasis_tokens/.
 data_root: /mnt/shared/datasets/NeuRL-dataset
 folds_csv: /mnt/shared/datasets/NeuRL-dataset/postprocessed/oasis_c3/split_info/folds.csv
 metadata_csv: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
-token_dir: data/oasis_tokens/neurovfm_tokens_raw_local_w2x4x4  # rawL; rawG via --token_dir
+token_dir: data/oasis_tokens/neurovfm_tokens_raw_local_w2x4x4  # run_baseline.py sets token_dir and the scans per dataset/encoder
 fold: 0
 seed: 0
 device: cuda               # pick the GPU with CUDA_VISIBLE_DEVICES
