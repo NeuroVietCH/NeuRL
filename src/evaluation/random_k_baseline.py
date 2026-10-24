@@ -1,6 +1,6 @@
 """Random-look baseline: CN/AD from the mean of k random tokens per scan, per OASIS fold.
 
-    .venv/bin/python src/evaluation/random_k_baseline.py [--folds 0 1 2 3 4] [--draws 10] [--ks 1 2 4 8 16 32 64]
+    .venv/bin/python src/evaluation/random_k_baseline.py [--folds 0 1 2 3 4] [--draws 10] [--ks 1 2 4 8 16 32 64] [--token_dir DIR --out_dir DIR]
 
 For each fold and budget k, every scan (train and test) keeps k tokens drawn uniformly without
 replacement and is mean-pooled. A fresh StandardScaler + logistic-regression probe is fit on the
@@ -46,10 +46,14 @@ def main() -> None:
     parser.add_argument("--draws", type=int, default=10)
     parser.add_argument("--C", type=float, default=0.05)
     parser.add_argument("--out_dir", default=str(REPO / "outputs" / "random_k_baseline"))
+    parser.add_argument("--token_dir", default=None, help="overrides token_dir, e.g. .../neurovfm_tokens_raw_local_w2x4x4 (unstripped, local window)")
     parser.add_argument("--save_probes", action="store_true", help="save every fitted probe under <out_dir>/probes/")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
+    if args.token_dir is not None:
+        cfg["token_dir"] = args.token_dir
+    print(f"tokens: {cfg['token_dir']}", flush=True)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cache: dict[str, np.ndarray] = {}  # token_path -> embeddings; scans repeat across folds

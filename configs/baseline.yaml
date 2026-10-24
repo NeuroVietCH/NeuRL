@@ -19,6 +19,10 @@ neurovfm:
   # PLUS every patch whose HD-BET brain fraction is >= this value. Needs <scan stem>_mask.nii.gz
   # next to the scan (preprocess.skull_strip.method: hdbet). null = NeuroVFM's rule only.
   min_brain_fraction: null
+  # Local-context encoding: split the patch grid into non-overlapping windows of [D, H, W] patches
+  # (4x16x16 mm each) and run each window as its own sequence, so attention never crosses a window.
+  # Positional embeddings keep absolute coords. null = whole scan in one sequence (NeuroVFM default).
+  local_window: null
 
 # Second encoder: Neuro-JEPA-Large (python -m neuro_evidence.neurojepa prep|extract, run from src/).
 # Unlike NeuroVFM it needs MNI152-registered, N4-corrected, skull-stripped T1s (see its README);
