@@ -293,7 +293,7 @@ New defaults: budget 8, `allow_stop: false`, `content: false`. Run stage B with 
 - full scan (all tokens) → `f`: the ceiling
 - brain size / token count only: checks the shape leak (§1, finding 7)
 
-### Sweep 4: unstripped NeuroVFM tokens (2026-10-21, IN PROGRESS): `outputs/pointer_runs/sweep4_*`
+### Sweep 4: unstripped NeuroVFM tokens (2026-10-21, finished 30/30): `outputs/pointer_runs/sweep4_*`
 
 Data change only. The model and settings are the sweep 3 best setup (`Bfixed`: stage B, guarded joint readers, `content: false`, budget 8, no STOP).
 - Tokens were re-extracted from the original unstripped OASIS-3 T1s (`oasis/raw/OASIS`, 2013 scans) using `neuro_evidence.extract_tokens` (branch `extract-oasis-raw-tokens`). This follows the strict NeuroVFM pipeline: no N4, no skull strip, NeuroVFM's own background rule. That matches the NeuroVFM paper, whose preprocessing is only resampling to 1×1×4 mm, percentile clipping and background removal.
@@ -317,3 +317,55 @@ Preliminary reading:
 - Random-look AUC barely changes, but random picks now often land on skull, scalp or air, so choosing where to look matters more.
 - Balanced accuracy is a little lower.
 - Still to do: fold 2, seed 9, all of `rawL`, and a fold-level test.
+
+Final, 5 folds × seeds 7, 8, 9 (15 runs per token set), budget 8. Summaries: `outputs/pointer_runs/summary_sweep4__{rawG,rawL}_b8.csv`.
+
+| Tokens | Test AUC | Random (8 tokens) | Gain (std) | Wins | Blind | Bal. acc | Readers alone, 8 / 32 tokens |
+|---|---|---|---|---|---|---|---|
+| Unstripped, global (`rawG`) | 0.882 | 0.874 | +0.009 (0.021) | 13/15 | 0.882 | 0.791 | 0.876 / 0.888 |
+| Unstripped, local (`rawL`) | 0.851 | 0.845 | +0.006 (0.026) | 9/15 | 0.851 | 0.768 | 0.844 / 0.876 |
+
+The interim +0.016 for `rawG` shrank to +0.009 with all 15 runs. Sweep 4 used the sweep 3 setup (seeds 7–9, 5 joint readers, `mean_return` selection), so it is superseded by the standard baseline below.
+
+Probe on the mean of k random tokens (`random_k_baseline.py --token_dir`, 5 folds × 10 draws, test AUC). Outputs: `outputs/random_k_baseline_raw_{global,local_w2x4x4}/`.
+
+| Tokens | k=1 | 2 | 4 | 8 | 16 | 32 | 64 | all |
+|---|---|---|---|---|---|---|---|---|
+| Skull-stripped (2026-10-13) | 0.774 | 0.791 | 0.829 | 0.848 | 0.849 | 0.869 | 0.876 | 0.894 |
+| Unstripped, global | 0.686 | 0.735 | 0.777 | 0.807 | 0.830 | 0.852 | 0.867 | 0.895 |
+| Unstripped, local | 0.588 | 0.646 | 0.698 | 0.752 | 0.785 | 0.808 | 0.829 | 0.872 |
+
+Local-window tokens behave as intended: a single local token is near chance (0.59), while all tokens still reach 0.87. The gap between a few tokens and the full scan is now 0.17 at k=4 and 0.12 at k=8, against ~0.05 on the skull-stripped tokens.
+
+### Standard baseline (2026-10-23): `outputs/pointer_runs/stdbase_*`
+
+**The reference for the new TRACE-MRI architecture.** It keeps the old architecture (position-only pointer policy, `content: false`, no STOP) and moves the training setup as close to plan v3 as the old code allows. Config `configs/pointer_baseline_std.yaml`; launch `scripts/run_standard_baseline.sh`.
+
+| | Standard baseline | Sweep 4 |
+|---|---|---|
+| Seeds | 0, 1, 2 (plan: consecutive from 0) | 7, 8, 9 |
+| Readers | 3 cross-fitted, frozen during PPO (plan: no joint updates) | 5, guarded joint updates |
+| Checkpoint | val AUC at the run's budget | val class-balanced return |
+| Budgets | 4, 6, 8 | 8 |
+| Tokens | unstripped `rawL` (primary), `rawG` | same |
+
+Per (tokens, fold, seed), the budget 4 run pretrains the readers and budgets 6 and 8 reuse them (`--readers`), so the three budgets differ only in the policy. One remaining gap to the plan: it selects every run on val AUC at budget 6, while the old code can only use the run's own budget.
+
+Test AUC on OASIS-3, mean over 5 folds × 3 seeds (15 runs per cell, std across runs). Random = same readers, same number of random tokens, 10 draws. Fold-level p: one-sample t-test of the per-fold gain (mean over seeds). Summaries: `outputs/pointer_runs/summary_stdbase_{rawL,rawG}[_per_run].csv`.
+
+| Tokens | Budget | Agent AUC | Random | Gain (std) | Wins | Fold p | Blind | Bal. acc |
+|---|---|---|---|---|---|---|---|---|
+| **Local (`rawL`)** | 4 | **0.840** (0.038) | 0.809 | +0.031 (0.026) | 14/15 | 0.001 | 0.840 | 0.751 |
+| | 6 | **0.836** (0.047) | 0.827 | +0.009 (0.045) | 8/15 | 0.22 | 0.836 | 0.748 |
+| | 8 | **0.845** (0.045) | 0.839 | +0.006 (0.030) | 9/15 | 0.61 | 0.845 | 0.756 |
+| Global (`rawG`) | 4 | 0.873 (0.030) | 0.852 | +0.021 (0.027) | 13/15 | 0.024 | 0.873 | 0.790 |
+| | 6 | 0.876 (0.026) | 0.861 | +0.014 (0.022) | 12/15 | 0.035 | 0.876 | 0.779 |
+| | 8 | 0.873 (0.036) | 0.867 | +0.006 (0.024) | 10/15 | 0.49 | 0.873 | 0.794 |
+
+Readers alone on random tokens (test): `rawL` 0.809 / 0.834 / 0.866 and `rawG` 0.853 / 0.867 / 0.880 at 4 / 8 / 32 tokens.
+
+Reading:
+- Global beats local by about 0.03 AUC at every budget (paired over fold × seed: +0.033, +0.039, +0.028 at budgets 4, 6, 8; p ≤ 0.007). That is the cost of removing whole-scan context from each token.
+- The old agent helps most at small budgets (+0.03 at budget 4 on `rawL`, p = 0.001); the gain fades by budget 8.
+- The blind policy equals the agent in all 90 runs: the old agent learns a fixed sequence of locations and does not adapt to each scan.
+- Bar for the new architecture on `rawL`: beat 0.840 / 0.836 / 0.845 at budgets 4 / 6 / 8, show a gap over its own blind control, and close part of the ~0.03 gap to global tokens.
