@@ -1,0 +1,74 @@
+# STANDARD BASELINE (2026-10-23): old pointer-agent architecture under the plan v3 training setup.
+# Reference for comparing the new TRACE-MRI architecture. Differences from pointer_agent.yaml (sweep 4):
+#   seeds 0,1,2 (plan: consecutive from 0), 3 cross-fitted readers frozen during PPO (plan: no joint updates),
+#   best.pt by val AUC at the run's budget (plan: validation AUROC), budgets 4/6/8, unstripped local-window tokens.
+# Launch: scripts/run_standard_baseline.sh (readers pretrained once per fold/seed at b4, reused for b6/b8).
+# Results: docs/stage2_notes.md "Standard baseline".
+# Tokens: unstripped OASIS-3 NeuroVFM tokens (extract_tokens), copied from oasis/processed/ to data/oasis_tokens/.
+data_root: /mnt/shared/datasets/NeuRL-dataset
+folds_csv: /mnt/shared/datasets/NeuRL-dataset/postprocessed/oasis_c3/split_info/folds.csv
+metadata_csv: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
+token_dir: data/oasis_tokens/neurovfm_tokens_raw_local_w2x4x4  # rawL; rawG via --token_dir
+fold: 0
+seed: 0
+device: cuda               # pick the GPU with CUDA_VISIBLE_DEVICES
+
+environment:
+  budget: 8                # looks per episode (tokens inspected)
+  allow_stop: false        # true: the agent may STOP before the budget (budget 8 then stopped anywhere from 1.3 to 8 looks per fold)
+  look_cost: 0.01          # per look, in nats of reader loss
+  loss_clamp: 0.01         # reader P(true label) clamped to [0.01, 0.99] in the reward
+
+reader:                    # K cross-fitted evidence classifiers
+  k: 3                     # plan v3: three-reader cross-fitted ensemble
+  d: 128
+  layers: 2
+  heads: 4
+  dropout: 0.1
+  lr: 0.0003
+  weight_decay: 0.05
+  batch_size: 256
+  max_set: 32              # pretraining subsets have size 0..max_set (>= every budget we sweep)
+  max_steps: 4000
+  eval_every: 200
+  patience: 5
+  eval_sizes: [1, 4, 8, 16, 32]
+  eval_draws: 4
+
+policy:
+  d: 128
+  layers: 2
+  heads: 4
+  content: false           # false: never sees inspected embeddings or belief -> one fixed location sequence.
+                           # Sweep 3 (budget 8, 15 runs): +0.009 AUC over random vs -0.005 with content (which overfits train scans)
+
+ppo:
+  updates: 1000
+  episodes_per_update: 128
+  epochs: 4
+  minibatch_size: 512
+  gamma: 1.0
+  gae_lambda: 0.95
+  clip_ratio: 0.2
+  lr: 0.0003
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  target_kl: 0.02          # early-stop an update's epochs when approx KL > 1.5x this (null = off)
+
+joint:                     # stage B; false = stage A (readers frozen after pretraining)
+  enabled: false
+  every: 10                # PPO updates between reader updates
+  steps: 20                # optimizer steps per reader per update (was 50: budget-4 runs degraded the readers)
+  batch_size: 256
+  lr: 0.00003              # was 1e-4
+  random_fraction: 0.75    # share of each reader batch that is random subsets instead of the agent's picks (was 0.5)
+  guard: true              # undo a reader's update if it raises its val balanced BCE on fixed random subsets
+  guard_tolerance: 0.01    # allowed rise in val balanced BCE (0 reverted ~all updates in a synthetic test)
+
+training:
+  val_fraction: 0.1        # subject-grouped hold-out from the fold's train split
+  eval_every: 20           # PPO updates between validation evals
+  select_metric: auc       # plan v3: select on validation AUROC (sweeps 3-4 used mean_return)
+  random_draws: 10         # draws for the random-looks baseline at eval (3 draws varied by ~0.05 AUC on test)
+  out_dir: outputs/pointer_runs
