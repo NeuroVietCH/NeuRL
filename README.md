@@ -142,3 +142,13 @@ outputs/tokens/<sample_id>.npz
 ```
 
 It contains `embeddings [N, 768]`, `coords [N, 3]`, `brain_fraction [N]` (HD-BET brain fraction per token), `neurovfm_foreground [N]` (False = added by the mask rule), and JSON metadata (including `geometry` to map coords back to the scan). Downstream code should usually restrict to brain tokens, e.g. `brain_fraction >= 0.5`, while the encoder still sees the whole head as context.
+
+## Standard baseline
+
+Run the standard baseline (random-k logistic-regression probe + pointer agent with frozen attention readers, seeds 0–2, budgets 4/6/8) for any registered dataset and encoder cache:
+
+```bash
+.venv/bin/python scripts/run_baseline.py --dataset oasis --encoder neurovfm_local --gpus 1
+```
+
+Datasets, encoder caches and the fixed protocol are registered in `configs/baselines.yaml`; results go to `outputs/baselines/<dataset>__<encoder>/REPORT.md`. How to run it, add a cache or a dataset, and read the report: [`docs/baselines.md`](docs/baselines.md). Claude Code picks this up through the `run-baseline` skill (`.claude/skills/run-baseline/`), so asking it to "run the baseline with ResNet on ADNI" is enough.

@@ -1,0 +1,50 @@
+# Baseline registry: which data a (dataset, encoder) baseline runs on.
+#
+#     .venv/bin/python scripts/run_baseline.py --dataset oasis --encoder neurovfm_local
+#
+# The protocol (model, seeds, budgets, probe) is fixed here so every dataset/encoder gets the same
+# baseline. Results land in outputs/baselines/<dataset>__<encoder>/REPORT.md. How-to: docs/baselines.md.
+
+protocol:
+  config: configs/pointer_baseline_std.yaml  # standard baseline: old pointer agent, plan v3 training setup
+  seeds: [0, 1, 2]
+  budgets: [4, 6, 8]                         # per (fold, seed), the first budget pretrains the readers, the rest reuse them
+  probe_ks: [1, 2, 4, 8, 16, 32, 64]         # logistic regression on the mean of k random tokens (+ all tokens)
+  probe_draws: 10
+
+# Each dataset gives its scans in ONE of two ways:
+#   scan_table: CSV with sample_id, subject_id, label (0 CN / 1 AD), fold, split (train/val/test), and
+#               token_file (name inside the encoder's token dir) or token_path. See docs/baselines.md.
+#   folds_csv + metadata_csv + data_root: the OASIS-3 fold CSV (token files named PTID__VISCODE__EXAMDATE.pt).
+# `caches` maps encoder name -> token dir (.pt files with embeddings [N, D], coords [N, 3], grid_shape [3]).
+# null = not extracted yet; the runner refuses to start until it is filled in.
+datasets:
+  oasis:
+    description: OASIS-3 CN vs AD, 5 subject-grouped folds. Code testing and pilots only (not paper results).
+    data_root: /mnt/shared/datasets/NeuRL-dataset
+    folds_csv: /mnt/shared/datasets/NeuRL-dataset/postprocessed/oasis_c3/split_info/folds.csv
+    metadata_csv: /mnt/shared/datasets/NeuRL-dataset/oasis/processed_mri/oasis_neurovfm_canonical_manifest.csv
+    folds: [0, 1, 2, 3, 4]
+    caches:
+      # Local copies of /mnt/shared/datasets/NeuRL-dataset/oasis/processed/<dir> (the mount is ~7 min slower per run).
+      neurovfm_local: data/oasis_tokens/neurovfm_tokens_raw_local_w2x4x4    # unstripped, attention in 2x4x4-patch windows
+      neurovfm_global: data/oasis_tokens/neurovfm_tokens_raw_global         # unstripped, full-scan attention
+      neurovfm_stripped: data/oasis_tokens/neurovfm_tokens                  # old N4 + HD-BET skull-stripped stand-in
+      resnet3d: null    # H5 (Hung): SimCLR ResNet-18 layer-3 cache, 256-d
+      neurojepa: null   # J1: Neuro-JEPA-Large, 1024-d, 576 tokens on the MNI grid
+
+  adni:
+    description: ADNI1/2/3 CN vs AD, P1 split (held-out ADNI test). Main dataset; runs on CSCS.
+    scan_table: null    # E1 (Long): fill in the CSCS path of the scan table
+    folds: [0]          # P1 has one train/val/test split; list more folds if E1 provides them
+    caches:
+      neurovfm_local: null   # E4 (Long)
+      resnet3d: null         # H5 (Hung)
+      neurojepa: null        # J1, optional
+
+  adni_dev:
+    description: ADNI development subset (E4a, ~300 train/val scans, no test subjects). Smoke tests of ADNI code only.
+    scan_table: null    # E4a (Long); needs a test split of its own to produce test numbers
+    folds: [0]
+    caches:
+      neurovfm_local: null

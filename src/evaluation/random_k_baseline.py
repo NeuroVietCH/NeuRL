@@ -1,4 +1,4 @@
-"""Random-look baseline: CN/AD from the mean of k random tokens per scan, per OASIS fold.
+"""Random-look baseline: CN/AD from the mean of k random tokens per scan, per fold (OASIS fold CSV or `scan_table`).
 
     .venv/bin/python src/evaluation/random_k_baseline.py [--folds 0 1 2 3 4] [--draws 10] [--ks 1 2 4 8 16 32 64] [--token_dir DIR --out_dir DIR]
 
@@ -29,7 +29,7 @@ from sklearn.preprocessing import StandardScaler
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
-from env.data import build_token_manifest  # noqa: E402
+from env.data import token_manifest  # noqa: E402
 
 
 def pool(embeddings: list[np.ndarray], k: int | None, rng: np.random.Generator) -> np.ndarray:
@@ -58,8 +58,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     cache: dict[str, np.ndarray] = {}  # token_path -> embeddings; scans repeat across folds
 
-    def load(fold: int, split: str):
-        m = build_token_manifest(cfg["folds_csv"], cfg["token_dir"], cfg["metadata_csv"], fold=fold, split=split, data_root=cfg["data_root"])
+    def load(fold: int, *splits: str):
+        m = pd.concat([token_manifest(cfg, fold=fold, split=split) for split in splits])
         for p in map(str, m["token_path"]):
             if p not in cache:
                 cache[p] = torch.load(p, map_location="cpu")["embeddings"].float().numpy()
@@ -67,7 +67,7 @@ def main() -> None:
 
     rows = []
     for fold in args.folds:
-        Etr, ytr = load(fold, "train")
+        Etr, ytr = load(fold, "train", "val")  # an explicit val split joins train: the probe has nothing to tune
         Ete, yte = load(fold, "test")
         print(f"fold {fold}: train {len(ytr)} ({ytr.sum()} AD), test {len(yte)} ({yte.sum()} AD)", flush=True)
         for k in [*args.ks, None]:

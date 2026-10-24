@@ -369,3 +369,5 @@ Reading:
 - The old agent helps most at small budgets (+0.03 at budget 4 on `rawL`, p = 0.001); the gain fades by budget 8.
 - The blind policy equals the agent in all 90 runs: the old agent learns a fixed sequence of locations and does not adapt to each scan.
 - Bar for the new architecture on `rawL`: beat 0.840 / 0.836 / 0.845 at budgets 4 / 6 / 8, show a gap over its own blind control, and close part of the ~0.03 gap to global tokens.
+
+Update (2026-10-24): `scripts/run_standard_baseline.sh` is replaced by `scripts/run_baseline.py`, which runs this same baseline (probe + pointer agent) for any dataset and encoder registered in `configs/baselines.yaml` (`docs/baselines.md`). Check: its report stage on these 45 `rawL` runs reproduces the table above exactly.

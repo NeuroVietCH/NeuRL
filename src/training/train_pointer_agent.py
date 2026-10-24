@@ -1,4 +1,4 @@
-"""Train the pointer agent on one OASIS fold: cross-fitted readers, then PPO (stage A or joint stage B).
+"""Train the pointer agent on one fold (OASIS fold CSV, or any `scan_table`): cross-fitted readers, then PPO (stage A or joint stage B).
 
     .venv/bin/python src/training/train_pointer_agent.py --config configs/pointer_agent.yaml \
         [--fold 0] [--updates N] [--budget K] [--seed S] [--joint] [--readers <run>/readers.pt] [--name NAME]
@@ -33,7 +33,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
 from agent.pointer_policy import PointerActorCritic  # noqa: E402
-from env.data import build_token_manifest, load_split_samples  # noqa: E402
+from env.data import load_split_samples, token_manifest  # noqa: E402
 from env.pointer_env import PointerEnv  # noqa: E402
 from env.token_bank import TokenBank  # noqa: E402
 from evaluation.pointer_eval import BlindPolicy, evaluate_pointer  # noqa: E402
@@ -104,13 +104,14 @@ def main() -> None:
     setup_logging(log, run_dir)
     yaml.safe_dump(cfg, open(run_dir / "config.yaml", "w"), sort_keys=False)
     log.info(f"run dir: {run_dir}")
-    log.info(f"data: OASIS-3 NeuroVFM tokens from {cfg['token_dir']}")
+    log.info(f"data: {cfg.get('scan_table') or cfg['folds_csv']}, tokens from {cfg['token_dir']}")
 
     # 1. Data.
-    mk = dict(fold=cfg["fold"], data_root=cfg["data_root"])
-    train_m = build_token_manifest(cfg["folds_csv"], cfg["token_dir"], cfg["metadata_csv"], split="train", **mk)
-    test_m = build_token_manifest(cfg["folds_csv"], cfg["token_dir"], cfg["metadata_csv"], split="test", **mk)
-    train_m, val_m = split_train_val(train_m, float(train_cfg["val_fraction"]), seed)
+    train_m = token_manifest(cfg, fold=cfg["fold"], split="train")
+    test_m = token_manifest(cfg, fold=cfg["fold"], split="test")
+    val_m = token_manifest(cfg, fold=cfg["fold"], split="val")
+    if len(val_m) == 0:  # no explicit val split: subject-grouped hold-out from train
+        train_m, val_m = split_train_val(train_m, float(train_cfg["val_fraction"]), seed)
     t0 = time.time()
     parts = {name: load_split_samples(m) for name, m in (("train", train_m), ("val", val_m), ("test", test_m))}
     samples = parts["train"] + parts["val"] + parts["test"]
